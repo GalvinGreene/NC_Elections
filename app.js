@@ -246,8 +246,8 @@ function buildAggregatesTSV(rows){
     const contestId = norm(getCol(r, ["contest_id","contest","contestid"]));
     const title = (getCol(r, ["contest_title","contest_name","contest","Contest"]) ?? "").trim();
 
-    const cand = (getCol(r, ["candidate","choice","Candidate"]) ?? "").trim();
-    const party = (getCol(r, ["candidate_party","choice_party","party","Party"]) ?? "").trim();
+    const cand = (getCol(r, ["candidate","candidate_name","choice","Candidate"]) ?? "").trim();
+    const party = (getCol(r, ["candidate_party","candidate_party_lbl","choice_party","party","Party"]) ?? "").trim();
     const votes = num(getCol(r, ["vote_ct","total votes","votes","Total Votes"]));
 
     if(!county || (!precinctName && !precinctCode) || !contestId || !title || !cand) continue;
