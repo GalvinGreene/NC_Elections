@@ -236,6 +236,12 @@ function scopeCodeFromRow(r){
   return "OT";
 }
 
+function scopeCodeFromSet(scopes){
+  if(scopes.has("CO")) return "CO";
+  if(scopes.has("SW")) return "SW";
+  return "OT";
+}
+
 // Build aggregates for TSV mode
 function buildAggregatesTSV(rows){
   precinctAggTSV.clear();
@@ -248,22 +254,23 @@ function buildAggregatesTSV(rows){
     const precinctName = norm(getCol(r, ["precinct_name","precinct","Precinct","precinct_desc"]));
     const precinctCode = norm(getCol(r, ["precinct_code","precinct_cd","precinct_id"]));
 
-    const contestId = norm(getCol(r, ["contest_id","contest","contestid"]));
     const title = (getCol(r, ["contest_title","contest_name","contest","Contest"]) ?? "").trim();
+    const titleKey = norm(title);
 
     const cand = (getCol(r, ["candidate","candidate_name","choice","Candidate"]) ?? "").trim();
     const party = (getCol(r, ["candidate_party","candidate_party_lbl","choice_party","party","Party"]) ?? "").trim();
     const votes = num(getCol(r, ["vote_ct","total votes","votes","Total Votes"]));
 
-    if(!county || (!precinctName && !precinctCode) || !contestId || !title || !cand) continue;
+    if(!county || (!precinctName && !precinctCode) || !titleKey || !cand) continue;
 
     const scopeCode = scopeCodeFromRow(r);
-    const contestKey = `${contestId}||${title}`;
+    const contestKey = titleKey;
 
     if(!contestByKey.has(contestKey)){
-      contestByKey.set(contestKey, { key: contestKey, id: contestId, title, scopeCode, counties: new Set(), totalVotes: 0 });
+      contestByKey.set(contestKey, { key: contestKey, title, scopes: new Set(), counties: new Set(), totalVotes: 0 });
     }
     const cobj = contestByKey.get(contestKey);
+    cobj.scopes.add(scopeCode);
     cobj.counties.add(county);
     cobj.totalVotes += votes;
 
@@ -321,7 +328,13 @@ function buildAggregatesTSV(rows){
     obj.winnerParty = best ? best.party : "";
   }
 
-  contestsTSV = [...contestByKey.values()];
+  contestsTSV = [...contestByKey.values()].map(c => ({
+    key: c.key,
+    title: c.title,
+    scopeCode: scopeCodeFromSet(c.scopes),
+    counties: c.counties,
+    totalVotes: c.totalVotes
+  }));
 }
 
 // Precompiled loading
@@ -337,9 +350,52 @@ async function tryLoadManifest(){
 
 function contestsForMode(){
   if(elMode.value === "precompiled"){
-    return manifest?.contests ?? [];
+    return mergeContestsByTitle(manifest?.contests ?? []);
   }
   return contestsTSV;
+}
+
+function mergeContestsByTitle(contests){
+  const byTitle = new Map();
+  for(const contest of contests){
+    const title = (contest.title ?? "").trim();
+    if(!title) continue;
+    const titleKey = norm(title);
+    if(!byTitle.has(titleKey)){
+      byTitle.set(titleKey, {
+        title,
+        key: contest.key,
+        scopes: new Set([contest.scopeCode]),
+        counties: new Set(contest.counties || []),
+        totalVotes: contest.totalVotes || 0,
+        contestKeys: [contest.key],
+        original: contest
+      });
+    } else {
+      const entry = byTitle.get(titleKey);
+      entry.contestKeys.push(contest.key);
+      entry.scopes.add(contest.scopeCode);
+      (contest.counties || []).forEach(c => entry.counties.add(c));
+      entry.totalVotes += contest.totalVotes || 0;
+    }
+  }
+
+  const merged = [];
+  for(const entry of byTitle.values()){
+    if(entry.contestKeys.length === 1){
+      merged.push(entry.original);
+    } else {
+      merged.push({
+        title: entry.title,
+        key: `merged::${norm(entry.title)}`,
+        scopeCode: scopeCodeFromSet(entry.scopes),
+        counties: Array.from(entry.counties),
+        totalVotes: entry.totalVotes,
+        contestKeys: entry.contestKeys.slice()
+      });
+    }
+  }
+  return merged;
 }
 
 function getContestByKey(key){
@@ -436,12 +492,36 @@ async function getAggForSelectedContest(){
 async function getAggForContestKey(contestKey){
   if(!contestKey) return null;
 
+  const contestEntry = getContestByKey(contestKey);
+  if(contestEntry?.contestKeys?.length > 1){
+    return await getAggForContestKeys(contestEntry.contestKeys, {
+      contestInfo: {
+        title: contestEntry.title,
+        key: contestEntry.key,
+        scopeCode: contestEntry.scopeCode,
+        totalVotes: contestEntry.totalVotes
+      },
+      isFolder: false
+    });
+  }
+
+  return getAggForContestKeyRaw(contestKey, contestEntry);
+}
+
+async function getAggForContestKeyRaw(contestKey, contestEntry){
   if(elMode.value === "tsv"){
-    return { precinctAgg: precinctAggTSV, countyAgg: countyAggTSV, contest: contestsTSV.find(c=>c.key===contestKey), isFolder: false, contestKey };
+    return {
+      precinctAgg: precinctAggTSV,
+      countyAgg: countyAggTSV,
+      contest: contestEntry || contestsTSV.find(c => c.key === contestKey),
+      isFolder: false,
+      usesCombinedKeys: false,
+      contestKey
+    };
   }
 
   // precompiled
-  const c = (manifest?.contests ?? []).find(x => x.key === contestKey);
+  const c = contestEntry || (manifest?.contests ?? []).find(x => x.key === contestKey);
   if(!c) return null;
 
   if(contestCache.has(c.file)) return contestCache.get(c.file);
@@ -453,20 +533,31 @@ async function getAggForContestKey(contestKey){
   // Convert to Maps for fast access
   const pMap = new Map(Object.entries(pack.precinctAgg || {}));
   const cMap = new Map(Object.entries(pack.countyAgg || {}));
-  const out = { precinctAgg: pMap, countyAgg: cMap, contest: c, isFolder: false, contestKey };
+  const out = { precinctAgg: pMap, countyAgg: cMap, contest: c, isFolder: false, usesCombinedKeys: false, contestKey };
   contestCache.set(c.file, out);
   return out;
 }
 
-async function getAggForContestKeys(contestKeys){
+async function getAggForContestKeys(contestKeys, options = {}){
   if(!contestKeys.length) return null;
   const combinedPrecinct = new Map();
   const combinedCounty = new Map();
   let totalVotes = 0;
   const contests = [];
+  const fetchAgg = options.fetchAgg || getAggForContestKeyRaw;
+  const expandedKeys = [];
 
   for(const key of contestKeys){
-    const agg = await getAggForContestKey(key);
+    const entry = getContestByKey(key);
+    if(entry?.contestKeys?.length > 1){
+      expandedKeys.push(...entry.contestKeys);
+    } else {
+      expandedKeys.push(key);
+    }
+  }
+
+  for(const key of expandedKeys){
+    const agg = await fetchAgg(key);
     if(!agg) continue;
     contests.push(agg.contest);
     totalVotes += agg.contest?.totalVotes || 0;
@@ -529,18 +620,21 @@ async function getAggForContestKeys(contestKeys){
     obj.winnerParty = bestParty;
   }
 
+  const contestInfo = options.contestInfo || {
+    title: `Folder (${contestKeys.length} contests)`,
+    key: contestKeys.join(","),
+    scopeCode: "SW",
+    totalVotes
+  };
+
   return {
     precinctAgg: combinedPrecinct,
     countyAgg: combinedCounty,
-    contest: {
-      title: `Folder (${contestKeys.length} contests)`,
-      key: contestKeys.join(","),
-      scopeCode: "SW",
-      totalVotes
-    },
+    contest: contestInfo,
     contests,
-    isFolder: true,
-    contestKeys
+    isFolder: options.isFolder ?? true,
+    usesCombinedKeys: true,
+    contestKeys: expandedKeys
   };
 }
 
@@ -576,7 +670,7 @@ function styleForFeatureFactory(active){
     }
 
     const shade = elShade.value;
-    const k = active.isFolder ? `${county}|${precinct}` : `${contestKey}|${county}|${precinct}`;
+    const k = active.usesCombinedKeys ? `${county}|${precinct}` : `${contestKey}|${county}|${precinct}`;
     const m = active.precinctAgg.get(k);
 
     if(!m || !m.winner){
@@ -647,7 +741,7 @@ function bindFeatureEvents(feature, layer){
     const p = feature.properties || {};
     const county = norm(p.county_nam);
     const precinct = norm(joinValueFromFeature(p));
-    const k = active.isFolder ? `${county}|${precinct}` : `${contestKey}|${county}|${precinct}`;
+    const k = active.usesCombinedKeys ? `${county}|${precinct}` : `${contestKey}|${county}|${precinct}`;
     const m = active.precinctAgg.get(k);
 
     if(!m || !m.winner){
@@ -686,8 +780,8 @@ async function updatePanels(active){
 
   // compute totalVotes via countyAgg entries (faster)
   for(const [k, v] of active.countyAgg){
-    const kCounty = active.isFolder ? k : k.split("|")[1];
-    if(!active.isFolder && !k.startsWith(contestKey + "|")) continue;
+    const kCounty = active.usesCombinedKeys ? k : k.split("|")[1];
+    if(!active.usesCombinedKeys && !k.startsWith(contestKey + "|")) continue;
     if(countyFilter && kCounty !== countyFilter) continue;
     totalVotes += (v.total || 0);
   }
@@ -698,7 +792,7 @@ async function updatePanels(active){
       const lyrCounty = norm(props.county_nam);
       if(countyFilter && lyrCounty !== countyFilter) return;
       const precinct = norm(joinValueFromFeature(props));
-      const k = active.isFolder ? `${lyrCounty}|${precinct}` : `${contestKey}|${lyrCounty}|${precinct}`;
+      const k = active.usesCombinedKeys ? `${lyrCounty}|${precinct}` : `${contestKey}|${lyrCounty}|${precinct}`;
       const m = active.precinctAgg.get(k);
       if(m && m.winner) colored++; else missing++;
     });
@@ -718,8 +812,8 @@ async function updatePanels(active){
   // County scoreboard (top 12 by total votes)
   const rows = [];
   for(const [k, v] of active.countyAgg){
-    const kCounty = active.isFolder ? k : k.split("|")[1];
-    if(!active.isFolder && !k.startsWith(contestKey + "|")) continue;
+    const kCounty = active.usesCombinedKeys ? k : k.split("|")[1];
+    if(!active.usesCombinedKeys && !k.startsWith(contestKey + "|")) continue;
     if(countyFilter && kCounty !== countyFilter) continue;
     rows.push({ county: kCounty, total: v.total || 0, winnerParty: v.winnerParty || "" });
   }
@@ -742,7 +836,7 @@ async function getActiveAgg(){
   const contestKeys = getContestKeysForMap();
   if(!contestKeys.length) return null;
   if(elMapTarget.value === "folder"){
-    return await getAggForContestKeys(contestKeys);
+    return await getAggForContestKeys(contestKeys, { isFolder: true });
   }
   return await getAggForContestKey(contestKeys[0]);
 }
