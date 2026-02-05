@@ -34,6 +34,7 @@ const elLines  = document.getElementById("toggleLines");
 const elLoad   = document.getElementById("loadBtn");
 const elReset  = document.getElementById("resetBtn");
 const elDownload = document.getElementById("downloadBtn");
+const elSaveRawBtn = document.getElementById("saveRawBtn");
 
 const elSummary= document.getElementById("summary");
 const elBoard  = document.getElementById("countyBoard");
@@ -47,6 +48,7 @@ const elClearSelectBtn = document.getElementById("clearSelectBtn");
 const elFolderName = document.getElementById("folderName");
 const elAddFolderBtn = document.getElementById("addFolderBtn");
 const elAssignFolderBtn = document.getElementById("assignFolderBtn");
+const elExportFolderBtn = document.getElementById("exportFolderBtn");
 const elRemoveFolderBtn = document.getElementById("removeFolderBtn");
 const elFolderSummary = document.getElementById("folderSummary");
 
@@ -69,6 +71,9 @@ let folders = folderStore.load();
 
 const selectedContestKeys = new Set();
 let filteredContestKeys = [];
+let rawTSVText = "";
+let rawTSVHeader = [];
+let rawTSVContestIndex = -1;
 
 function norm(s){ return (s ?? "").toString().trim().toUpperCase(); }
 function num(x){
@@ -120,6 +125,31 @@ function parseTSV(text){
     rows.push(r);
   }
   return rows;
+}
+
+function parseTSVHeader(text){
+  const firstLine = text.split(/\r?\n/).find(l => l.trim().length);
+  if(!firstLine) return [];
+  return firstLine.split("\t").map(h => h.trim());
+}
+
+function rememberRawTSV(text){
+  rawTSVText = text;
+  rawTSVHeader = parseTSVHeader(text);
+  rawTSVContestIndex = rawTSVHeader.findIndex(h => h.toLowerCase() === "contest_title");
+  elSaveRawBtn.disabled = !rawTSVText;
+}
+
+function downloadTextFile(name, text){
+  const blob = new Blob([text], {type: "text/plain"});
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 // Robust column getter: tries multiple names
@@ -309,12 +339,14 @@ function renderFolderSelect(){
   if(!names.length){
     elFolderSelect.innerHTML = `<option value="">No folders</option>`;
     elFolderSelect.disabled = true;
+    elExportFolderBtn.disabled = true;
   } else {
     const current = elFolderSelect.value;
     elFolderSelect.innerHTML = names.map(n => `<option value="${n}">${n}</option>`).join("");
     if(names.includes(current)) elFolderSelect.value = current;
     else elFolderSelect.value = names[0];
     elFolderSelect.disabled = elMapTarget.value !== "folder";
+    elExportFolderBtn.disabled = !rawTSVText;
   }
   updateFolderSummary();
 }
@@ -675,6 +707,7 @@ elLoad.addEventListener("click", async () => {
   elSummary.textContent = "Loading TSV and building aggregates…";
   try{
     const text = await loadTextFromFile(file);
+    rememberRawTSV(text);
     const rows = parseTSV(text);
     buildAggregatesTSV(rows);
     fillContestDropdown();
@@ -693,6 +726,7 @@ elDownload.addEventListener("click", async () => {
     const res = await fetch(STATEWIDE_TSV_URL, {cache:"no-store"});
     if(!res.ok) throw new Error("Failed download");
     const text = await res.text();
+    rememberRawTSV(text);
     const rows = parseTSV(text);
     buildAggregatesTSV(rows);
     fillContestDropdown();
@@ -704,11 +738,20 @@ elDownload.addEventListener("click", async () => {
   }
 });
 
+elSaveRawBtn.addEventListener("click", () => {
+  if(!rawTSVText) return;
+  downloadTextFile("results_raw/STATEWIDE_PRECINCT_SORT.txt", rawTSVText);
+});
+
 elReset.addEventListener("click", async () => {
   contestsTSV = [];
   precinctAggTSV.clear();
   countyAggTSV.clear();
   contestCache.clear();
+  rawTSVText = "";
+  rawTSVHeader = [];
+  rawTSVContestIndex = -1;
+  elSaveRawBtn.disabled = true;
   elContest.innerHTML = "";
   elScope.value = "ALL";
   elCounty.value = "";
@@ -731,6 +774,7 @@ elMapTarget.addEventListener("change", async () => {
   await refresh();
 });
 elFolderSelect.addEventListener("change", refresh);
+elFolderSelect.addEventListener("change", () => updateFolderSummary());
 
 elContestSearch.addEventListener("input", () => {
   renderContestLibrary();
@@ -777,6 +821,39 @@ elAssignFolderBtn.addEventListener("click", () => {
   folders[name] = Array.from(existing);
   folderStore.save(folders);
   updateFolderSummary();
+});
+
+elExportFolderBtn.addEventListener("click", () => {
+  const folderName = elFolderSelect.value;
+  if(!folderName || !rawTSVText) return;
+  if(rawTSVContestIndex < 0){
+    alert("contest_title column not found in the TSV.");
+    return;
+  }
+  const contestKeys = folders[folderName] || [];
+  const contestTitles = new Set(
+    contestKeys.map(key => getContestByKey(key)?.title).filter(Boolean)
+  );
+  if(!contestTitles.size){
+    alert("Folder has no contests to export.");
+    return;
+  }
+  const lines = rawTSVText.split(/\r?\n/);
+  if(!lines.length) return;
+  const output = [];
+  const header = lines.find(l => l.trim().length);
+  if(!header) return;
+  output.push(header);
+  for(let i=1;i<lines.length;i++){
+    const line = lines[i];
+    if(!line.trim()) continue;
+    const cols = line.split("\t");
+    const title = (cols[rawTSVContestIndex] ?? "").trim();
+    if(contestTitles.has(title)){
+      output.push(line);
+    }
+  }
+  downloadTextFile(`results_raw/${folderName.replace(/\\s+/g, "_")}.txt`, output.join("\n"));
 });
 
 elRemoveFolderBtn.addEventListener("click", () => {
