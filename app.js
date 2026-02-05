@@ -112,6 +112,11 @@ function getFirstCoordinate(geojson){
   return null;
 }
 
+function joinValueFromFeature(props){
+  if(elJoin.value === "join_prec_id") return props?.prec_id;
+  return props?.enr_desc;
+}
+
 function reprojectCoordinates(coords, transform){
   if(typeof coords[0] === "number"){
     const input = coords.length > 2 ? coords.slice(0,2) : coords;
@@ -543,7 +548,7 @@ function styleForFeatureFactory(active){
   return function(feature){
     const props = feature.properties || {};
     const county = norm(props.county_nam);
-    const precinct = norm(props[elJoin.value]);
+    const precinct = norm(joinValueFromFeature(props));
     const countyFilter = elCounty.value;
     const showLines = elLines.checked;
     const lineWeight = Math.max(0, Number(elLineWeight.value) || 0);
@@ -641,7 +646,7 @@ function bindFeatureEvents(feature, layer){
 
     const p = feature.properties || {};
     const county = norm(p.county_nam);
-    const precinct = norm(p[elJoin.value]);
+    const precinct = norm(joinValueFromFeature(p));
     const k = active.isFolder ? `${county}|${precinct}` : `${contestKey}|${county}|${precinct}`;
     const m = active.precinctAgg.get(k);
 
@@ -692,7 +697,7 @@ async function updatePanels(active){
       const props = layer.feature.properties || {};
       const lyrCounty = norm(props.county_nam);
       if(countyFilter && lyrCounty !== countyFilter) return;
-      const precinct = norm(props[elJoin.value]);
+      const precinct = norm(joinValueFromFeature(props));
       const k = active.isFolder ? `${lyrCounty}|${precinct}` : `${contestKey}|${lyrCounty}|${precinct}`;
       const m = active.precinctAgg.get(k);
       if(m && m.winner) colored++; else missing++;
