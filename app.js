@@ -16,6 +16,7 @@ let baseLayer;
 // In-memory aggregates (TSV mode)
 let contestsTSV = [];
 let precinctAggTSV = new Map();
+let precinctLookupTSV = new Map();
 let countyAggTSV = new Map();
 
 // Precompiled cache
@@ -115,6 +116,11 @@ function getFirstCoordinate(geojson){
 function joinValueFromFeature(props){
   if(elJoin.value === "join_prec_id") return props?.prec_id;
   return props?.enr_desc;
+}
+
+function resolvePrecinctAgg(active, key){
+  if(active?.precinctLookup?.has(key)) return active.precinctLookup.get(key);
+  return active?.precinctAgg?.get(key);
 }
 
 function reprojectCoordinates(coords, transform){
@@ -245,6 +251,7 @@ function scopeCodeFromSet(scopes){
 // Build aggregates for TSV mode
 function buildAggregatesTSV(rows){
   precinctAggTSV.clear();
+  precinctLookupTSV.clear();
   countyAggTSV.clear();
 
   const contestByKey = new Map();
@@ -288,6 +295,12 @@ function buildAggregatesTSV(rows){
     prev.votes += votes;
     if(!prev.party && party) prev.party = party;
     pobj.candVotes.set(cand, prev);
+
+    const aliasKeys = new Set([precinctName, precinctCode].filter(Boolean));
+    for(const alias of aliasKeys){
+      const aliasKey = `${contestKey}|${county}|${alias}`;
+      precinctLookupTSV.set(aliasKey, pobj);
+    }
 
     const ckey = `${contestKey}|${county}`;
     let cagg = countyAggTSV.get(ckey);
@@ -512,6 +525,7 @@ async function getAggForContestKeyRaw(contestKey, contestEntry){
   if(elMode.value === "tsv"){
     return {
       precinctAgg: precinctAggTSV,
+      precinctLookup: precinctLookupTSV,
       countyAgg: countyAggTSV,
       contest: contestEntry || contestsTSV.find(c => c.key === contestKey),
       isFolder: false,
@@ -532,8 +546,11 @@ async function getAggForContestKeyRaw(contestKey, contestEntry){
 
   // Convert to Maps for fast access
   const pMap = new Map(Object.entries(pack.precinctAgg || {}));
+  const pLookup = pack.precinctLookup
+    ? new Map(Object.entries(pack.precinctLookup || {}).map(([alias, canonical]) => [alias, pMap.get(canonical)]))
+    : pMap;
   const cMap = new Map(Object.entries(pack.countyAgg || {}));
-  const out = { precinctAgg: pMap, countyAgg: cMap, contest: c, isFolder: false, usesCombinedKeys: false, contestKey };
+  const out = { precinctAgg: pMap, precinctLookup: pLookup, countyAgg: cMap, contest: c, isFolder: false, usesCombinedKeys: false, contestKey };
   contestCache.set(c.file, out);
   return out;
 }
@@ -671,7 +688,7 @@ function styleForFeatureFactory(active){
 
     const shade = elShade.value;
     const k = active.usesCombinedKeys ? `${county}|${precinct}` : `${contestKey}|${county}|${precinct}`;
-    const m = active.precinctAgg.get(k);
+    const m = resolvePrecinctAgg(active, k);
 
     if(!m || !m.winner){
       return {
@@ -742,7 +759,7 @@ function bindFeatureEvents(feature, layer){
     const county = norm(p.county_nam);
     const precinct = norm(joinValueFromFeature(p));
     const k = active.usesCombinedKeys ? `${county}|${precinct}` : `${contestKey}|${county}|${precinct}`;
-    const m = active.precinctAgg.get(k);
+    const m = resolvePrecinctAgg(active, k);
 
     if(!m || !m.winner){
       elClick.textContent = `No results matched.\nCounty: ${county}\nPrecinct: ${precinct}`;
@@ -793,7 +810,7 @@ async function updatePanels(active){
       if(countyFilter && lyrCounty !== countyFilter) return;
       const precinct = norm(joinValueFromFeature(props));
       const k = active.usesCombinedKeys ? `${lyrCounty}|${precinct}` : `${contestKey}|${lyrCounty}|${precinct}`;
-      const m = active.precinctAgg.get(k);
+      const m = resolvePrecinctAgg(active, k);
       if(m && m.winner) colored++; else missing++;
     });
   }
