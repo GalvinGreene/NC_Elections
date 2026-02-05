@@ -72,7 +72,7 @@ def main():
 
     inp = None
     for p in candidates:
-        if p.name.upper() in ["STATEWIDE_PRECINCT_SORT.TXT", "STATEWIDE_PRECINCT_SORT.TSV", "STATEWIDE_PRECINCT_SORT"]:
+        if p.name.upper() in ["STATEWIDE_PRECINCT_SORT.TXT"]:
             inp = p
             break
     if inp is None:
