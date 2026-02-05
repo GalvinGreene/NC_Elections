@@ -589,15 +589,17 @@ async function updatePanels(active){
     totalVotes += (v.total || 0);
   }
 
-  precinctLayer.eachLayer(layer => {
-    const props = layer.feature.properties || {};
-    const lyrCounty = norm(props.county_nam);
-    if(countyFilter && lyrCounty !== countyFilter) return;
-    const precinct = norm(props[elJoin.value]);
-    const k = active.isFolder ? `${lyrCounty}|${precinct}` : `${contestKey}|${lyrCounty}|${precinct}`;
-    const m = active.precinctAgg.get(k);
-    if(m && m.winner) colored++; else missing++;
-  });
+  if(precinctLayer){
+    precinctLayer.eachLayer(layer => {
+      const props = layer.feature.properties || {};
+      const lyrCounty = norm(props.county_nam);
+      if(countyFilter && lyrCounty !== countyFilter) return;
+      const precinct = norm(props[elJoin.value]);
+      const k = active.isFolder ? `${lyrCounty}|${precinct}` : `${contestKey}|${lyrCounty}|${precinct}`;
+      const m = active.precinctAgg.get(k);
+      if(m && m.winner) colored++; else missing++;
+    });
+  }
 
   elSummary.textContent =
     `Contest: ${c?.title ?? "(unknown)"}\n` +
@@ -628,6 +630,7 @@ async function updatePanels(active){
 
 async function refresh(){
   const active = await getActiveAgg();
+  if(!precinctLayer) return;
   precinctLayer.setStyle(styleForFeatureFactory(active));
   await updatePanels(active);
 }
@@ -648,13 +651,20 @@ async function init(){
     attribution:"&copy; OpenStreetMap"
   }).addTo(map);
 
-  precinctFeatures = await (await fetch(PRECINCTS_URL)).json();
-  fillCountyDropdown(precinctFeatures);
+  try{
+    const res = await fetch(PRECINCTS_URL);
+    if(!res.ok) throw new Error("precincts fetch failed");
+    precinctFeatures = await res.json();
+    fillCountyDropdown(precinctFeatures);
 
-  precinctLayer = L.geoJSON(precinctFeatures, {
-    style: styleForFeatureFactory(null),
-    onEachFeature: bindFeatureEvents
-  }).addTo(map);
+    precinctLayer = L.geoJSON(precinctFeatures, {
+      style: styleForFeatureFactory(null),
+      onEachFeature: bindFeatureEvents
+    }).addTo(map);
+  } catch (e){
+    console.error(e);
+    elSummary.textContent = "Precinct polygons failed to load. If you opened index.html directly, start a local server (e.g. python -m http.server) to avoid file:// CORS issues.";
+  }
 
   // precompiled manifest (optional)
   manifest = await tryLoadManifest();
