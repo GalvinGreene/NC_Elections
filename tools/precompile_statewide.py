@@ -81,6 +81,7 @@ def main():
     print("Reading:", inp)
 
     precinctAgg = {}   # contestKey|COUNTY|PRECINCT -> temp {total, candVotes{cand:{votes,party}}}
+    precinctLookup = {}  # alias contestKey|COUNTY|ALIAS -> canonical contestKey|COUNTY|PRECINCT
     countyAgg = {}     # contestKey|COUNTY -> temp {total, partyVotes{party:votes}}
     contestMeta = {}   # contestKey -> {id,title,scopeCode,counties:set,totalVotes,file}
 
@@ -90,7 +91,9 @@ def main():
             raise SystemExit("File appears to have no header row. Expected tab-delimited with headers.")
         for row in reader:
             county = norm(get(row, "county", "County"))
-            precinct = norm(get(row, "precinct_name", "precinct", "Precinct", "precinct_desc")) or norm(get(row, "precinct_code", "precinct_cd", "precinct_id"))
+            precinct_name = norm(get(row, "precinct_name", "precinct", "Precinct", "precinct_desc"))
+            precinct_code = norm(get(row, "precinct_code", "precinct_cd", "precinct_id"))
+            precinct = precinct_name or precinct_code
             contest_id = norm(get(row, "contest_id", "contest", "contestid"))
             title = get(row, "contest_title", "contest_name", "contest", "Contest").strip()
             cand = get(row, "candidate", "choice", "Candidate").strip()
@@ -136,6 +139,12 @@ def main():
             cv["votes"] += votes
             if not cv.get("party") and party:
                 cv["party"] = party
+
+            for alias in {precinct_name, precinct_code}:
+                if not alias:
+                    continue
+                alias_key = f"{contest_key}|{county}|{alias}"
+                precinctLookup[alias_key] = pk
 
             ck = f"{contest_key}|{county}"
             cobj = countyAgg.get(ck)
@@ -192,6 +201,12 @@ def main():
                     best_party = party
             c_out[ck] = {"total": obj["total"], "winnerParty": best_party}
 
+        lookup_out = {}
+        for alias_key, canonical_key in precinctLookup.items():
+            if not alias_key.startswith(contest_key + "|"):
+                continue
+            lookup_out[alias_key] = canonical_key
+
         pack = {
             "meta": {
                 "key": contest_key,
@@ -200,6 +215,7 @@ def main():
                 "totalVotes": meta["totalVotes"],
             },
             "precinctAgg": p_out,
+            "precinctLookup": lookup_out,
             "countyAgg": c_out,
         }
 
