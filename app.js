@@ -5,6 +5,7 @@
 
 // Files
 const PRECINCTS_URL = "./data/precincts.geojson";
+const PRECINCT_CRS = "+proj=lcc +lat_1=34.33333333333334 +lat_2=36.16666666666666 +lat_0=33.75 +lon_0=-79 +x_0=609601.2192024384 +y_0=0 +ellps=GRS80 +datum=NAD83 +units=us-ft +no_defs";
 const MANIFEST_URL  = "./data/precompiled/manifest.json";
 const CONTEST_DIR   = "./data/precompiled/contests/";
 
@@ -81,6 +82,42 @@ function num(x){
   return Number.isFinite(n) ? n : 0;
 }
 function clamp01(x){ return Math.max(0, Math.min(1, x)); }
+
+function getFirstCoordinate(geojson){
+  for(const feature of geojson.features || []){
+    const coords = feature?.geometry?.coordinates;
+    if(!coords) continue;
+    let node = coords;
+    while(Array.isArray(node) && Array.isArray(node[0])){
+      node = node[0];
+    }
+    if(Array.isArray(node) && typeof node[0] === "number"){
+      return node;
+    }
+  }
+  return null;
+}
+
+function reprojectCoordinates(coords, transform){
+  if(typeof coords[0] === "number"){
+    const [lon, lat] = transform(coords);
+    return [lon, lat];
+  }
+  return coords.map(coord => reprojectCoordinates(coord, transform));
+}
+
+function reprojectGeoJSON(geojson, transform){
+  return {
+    ...geojson,
+    features: geojson.features.map(feature => ({
+      ...feature,
+      geometry: {
+        ...feature.geometry,
+        coordinates: reprojectCoordinates(feature.geometry.coordinates, transform)
+      }
+    }))
+  };
+}
 
 function partyColor(party){
   const p = norm(party);
@@ -655,6 +692,15 @@ async function init(){
     const res = await fetch(PRECINCTS_URL);
     if(!res.ok) throw new Error("precincts fetch failed");
     precinctFeatures = await res.json();
+    const sample = getFirstCoordinate(precinctFeatures);
+    const needsReproject = sample && (Math.abs(sample[0]) > 180 || Math.abs(sample[1]) > 90);
+    if(needsReproject){
+      if(typeof proj4 !== "function"){
+        throw new Error("precincts.geojson uses projected coordinates; proj4 is required to reproject.");
+      }
+      const transform = (coord) => proj4(PRECINCT_CRS, "WGS84", coord);
+      precinctFeatures = reprojectGeoJSON(precinctFeatures, transform);
+    }
     fillCountyDropdown(precinctFeatures);
 
     precinctLayer = L.geoJSON(precinctFeatures, {
