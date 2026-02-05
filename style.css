@@ -53,6 +53,14 @@ select,button,input[type=file]{
   padding:8px 10px;
   font-size:13px;
 }
+input[type="range"]{
+  accent-color:#93c5fd;
+  width:140px;
+}
+.rangeValue{
+  font-size:11px;
+  color:var(--text);
+}
 input[type="text"], input[type="search"]{
   background:var(--panel);
   color:var(--text);
