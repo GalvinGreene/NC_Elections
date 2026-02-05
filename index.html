@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>NC Election Viewer Pro+</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="bar">
+    <div class="title">
+      <div class="h1">NC Election Viewer Pro+</div>
+      <div class="sub">Precinct map + (A) load TSV OR (B) instant precompiled contest packs</div>
+    </div>
+
+    <div class="controls">
+      <label>
+        Mode
+        <select id="mode">
+          <option value="precompiled">Precompiled (fast)</option>
+          <option value="tsv">Load TSV (one-time build)</option>
+        </select>
+      </label>
+
+      <label class="fileOnly">
+        Results file (TSV/TXT)
+        <input id="tsvFile" type="file" accept=".tsv,.txt" />
+      </label>
+
+      <label>
+        Scope
+        <select id="scope">
+          <option value="ALL">All</option>
+          <option value="SW">Statewide</option>
+          <option value="CO">County</option>
+          <option value="OT">Other</option>
+        </select>
+      </label>
+
+      <label>
+        County
+        <select id="county">
+          <option value="">All counties</option>
+        </select>
+      </label>
+
+      <label>
+        Contest
+        <select id="contest"></select>
+      </label>
+
+      <label>
+        Shade
+        <select id="shade">
+          <option value="party">Winner party</option>
+          <option value="margin">Margin</option>
+          <option value="turnout">Turnout</option>
+        </select>
+      </label>
+
+      <label>
+        Join field
+        <select id="joinField">
+          <option value="join_enr_desc">enr_desc (name)</option>
+          <option value="join_prec_id">prec_id (code)</option>
+        </select>
+      </label>
+
+      <label class="toggle">
+        Precinct lines
+        <input type="checkbox" id="toggleLines" checked>
+      </label>
+
+      <button id="loadBtn">Load</button>
+      <button id="resetBtn">Reset</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="map"></div>
+
+    <aside class="panel">
+      <div class="panelSection">
+        <div class="panelTitle">Contest summary</div>
+        <div id="summary" class="mono">Loading…</div>
+      </div>
+
+      <div class="panelSection">
+        <div class="panelTitle">County scoreboard</div>
+        <div id="countyBoard" class="mono smallmono">—</div>
+      </div>
+
+      <div class="panelSection">
+        <div class="panelTitle">Hover</div>
+        <div id="hover" class="mono">—</div>
+      </div>
+
+      <div class="panelSection">
+        <div class="panelTitle">Click precinct</div>
+        <div id="click" class="mono">Click a precinct on the map.</div>
+      </div>
+
+      <div class="panelSection">
+        <div class="panelTitle">Quick setup</div>
+        <div class="small">
+          <b>Fastest path (recommended):</b><br/>
+          1) Download STATEWIDE_PRECINCT_SORT.txt<br/>
+          2) Put it in <span class="mono">results_raw/</span><br/>
+          3) Run <span class="mono">python tools/precompile_statewide.py</span><br/>
+          4) Start server and use <b>Precompiled</b> mode<br/><br/>
+          <b>Alternate:</b> switch Mode to <b>Load TSV</b>, click Load, choose the file.
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
