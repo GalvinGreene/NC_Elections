@@ -59,6 +59,7 @@ const elAssignFolderBtn = document.getElementById("assignFolderBtn");
 const elExportFolderBtn = document.getElementById("exportFolderBtn");
 const elRemoveFolderBtn = document.getElementById("removeFolderBtn");
 const elFolderSummary = document.getElementById("folderSummary");
+const colorInputs = Array.from(document.querySelectorAll("input[type='color'][data-color-scope]"));
 
 const STATEWIDE_TSV_URL = "https://s3.amazonaws.com/dl.ncsbe.gov/ENRS/2024_11_05/results_precinct_sort/STATEWIDE_PRECINCT_SORT.txt";
 
@@ -146,14 +147,75 @@ function reprojectGeoJSON(geojson, transform){
   };
 }
 
+const DEFAULT_COLOR_CONFIG = {
+  parties: {
+    REP: "#b91c1c",
+    DEM: "#1d4ed8",
+    UNA: "#6b7280",
+    LIB: "#f59e0b",
+    GRN: "#16a34a",
+    OTHER: "#a855f7"
+  },
+  options: {
+    YES: "#16a34a",
+    NO: "#dc2626",
+    FOR: "#16a34a",
+    AGAINST: "#dc2626"
+  }
+};
+
+function loadColorConfig(){
+  try{
+    const raw = localStorage.getItem("colorConfig");
+    if(!raw) return structuredClone(DEFAULT_COLOR_CONFIG);
+    const parsed = JSON.parse(raw);
+    return {
+      parties: { ...DEFAULT_COLOR_CONFIG.parties, ...(parsed.parties || {}) },
+      options: { ...DEFAULT_COLOR_CONFIG.options, ...(parsed.options || {}) }
+    };
+  } catch {
+    return structuredClone(DEFAULT_COLOR_CONFIG);
+  }
+}
+
+function saveColorConfig(config){
+  localStorage.setItem("colorConfig", JSON.stringify(config));
+}
+
+let colorConfig = loadColorConfig();
+
 function partyColor(party){
   const p = norm(party);
-  if (p === "REP") return "#b91c1c";
-  if (p === "DEM") return "#1d4ed8";
-  if (p === "UNA" || p === "UNAFFILIATED") return "#6b7280";
-  if (p === "LIB") return "#f59e0b";
-  if (p === "GRN") return "#16a34a";
-  return "#a855f7";
+  if (p === "REP") return colorConfig.parties.REP;
+  if (p === "DEM") return colorConfig.parties.DEM;
+  if (p === "UNA" || p === "UNAFFILIATED") return colorConfig.parties.UNA;
+  if (p === "LIB") return colorConfig.parties.LIB;
+  if (p === "GRN") return colorConfig.parties.GRN;
+  return colorConfig.parties.OTHER;
+}
+
+function optionKeyFromCandidate(candidate){
+  const n = norm(candidate);
+  if(n === "FOR") return "FOR";
+  if(n === "AGAINST") return "AGAINST";
+  if(["YES","Y","APPROVE","APPROVED","FOR APPROVAL"].includes(n)) return "YES";
+  if(["NO","N","REJECT","REJECTED","AGAINST APPROVAL"].includes(n)) return "NO";
+  return "";
+}
+
+function winnerColor(winner){
+  if(!winner) return colorConfig.parties.OTHER;
+  const optionKey = optionKeyFromCandidate(winner.name);
+  if(optionKey && colorConfig.options[optionKey]){
+    return colorConfig.options[optionKey];
+  }
+  return partyColor(winner.party);
+}
+
+const NON_VOTE_CHOICES = new Set(["OVER VOTE", "UNDER VOTE"]);
+
+function isNonVoteCandidate(candidate){
+  return NON_VOTE_CHOICES.has(norm(candidate));
 }
 function tint(hex, t){
   const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -269,6 +331,7 @@ function buildAggregatesTSV(rows){
     const votes = num(getCol(r, ["vote_ct","total votes","votes","Total Votes"]));
 
     if(!county || (!precinctName && !precinctCode) || !titleKey || !cand) continue;
+    if(isNonVoteCandidate(cand)) continue;
 
     const scopeCode = scopeCodeFromRow(r);
     const contestKey = titleKey;
@@ -701,7 +764,7 @@ function styleForFeatureFactory(active){
     }
 
     if(shade === "party"){
-      const base = partyColor(m.winner.party);
+      const base = winnerColor(m.winner);
       const turnoutFactor = clamp01((m.total || 0) / 1200);
       const tinted = tint(base, 0.55 - 0.35*turnoutFactor);
       return {
@@ -714,7 +777,7 @@ function styleForFeatureFactory(active){
     }
 
     if(shade === "margin"){
-      const base = partyColor(m.winner.party);
+      const base = winnerColor(m.winner);
       const t = 0.75 - 0.65*clamp01(m.marginPct || 0);
       return {
         fillColor:tint(base, t),
@@ -767,11 +830,14 @@ function bindFeatureEvents(feature, layer){
     }
 
     const margin = ((m.marginPct || 0)*100).toFixed(1) + "%";
+    const optionKey = optionKeyFromCandidate(m.winner.name);
+    const partyLabel = optionKey ? `Option: ${optionKey}` : `Party: ${m.winner.party || "—"}`;
+
     elClick.textContent =
       `County: ${county}\n` +
       `Precinct: ${precinct}\n\n` +
       `Winner: ${m.winner.name || "—"}\n` +
-      `Party: ${m.winner.party || "—"}\n` +
+      `${partyLabel}\n` +
       `Votes: ${Math.round(m.winner.votes || 0).toLocaleString()}\n` +
       `Total: ${Math.round(m.total || 0).toLocaleString()}\n` +
       `Margin: ${margin}`;
@@ -927,8 +993,20 @@ function updateLayerOpacityLabel(){
   elLayerOpacityValue.textContent = Number(elLayerOpacity.value).toFixed(2);
 }
 
+function applyColorInputs(){
+  colorInputs.forEach(input => {
+    const scope = input.dataset.colorScope;
+    const key = input.dataset.colorKey;
+    const value = colorConfig?.[scope]?.[key];
+    if(value){
+      input.value = value;
+    }
+  });
+}
+
 updateLineWeightLabel();
 updateLayerOpacityLabel();
+applyColorInputs();
 
 elMode.addEventListener("change", async () => {
   setModeUI();
@@ -1025,6 +1103,17 @@ elJoin.addEventListener("change", refresh);
 elLines.addEventListener("change", refresh);
 elLineWeight.addEventListener("input", () => { updateLineWeightLabel(); refresh(); });
 elLayerOpacity.addEventListener("input", () => { updateLayerOpacityLabel(); refresh(); });
+colorInputs.forEach(input => {
+  input.addEventListener("input", async () => {
+    const scope = input.dataset.colorScope;
+    const key = input.dataset.colorKey;
+    if(!scope || !key) return;
+    if(!colorConfig[scope]) colorConfig[scope] = {};
+    colorConfig[scope][key] = input.value;
+    saveColorConfig(colorConfig);
+    await refresh();
+  });
+});
 elToggleBasemap.addEventListener("change", () => {
   if(!baseLayer) return;
   if(elToggleBasemap.checked){
