@@ -53,6 +53,14 @@ select,button,input[type=file]{
   padding:8px 10px;
   font-size:13px;
 }
+input[type="text"], input[type="search"]{
+  background:var(--panel);
+  color:var(--text);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:8px 10px;
+  font-size:13px;
+}
 button{cursor:pointer}
 button:hover{filter:brightness(1.08)}
 main{
@@ -86,3 +94,39 @@ main{
   color:var(--muted);
 }
 .small{font-size:12px;color:var(--muted);line-height:1.35}
+
+.stack{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.row{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  align-items:center;
+}
+.contestList{
+  max-height:220px;
+  overflow:auto;
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:8px;
+  background:rgba(11,15,20,.4);
+}
+.contestItem{
+  display:flex;
+  gap:8px;
+  align-items:flex-start;
+  padding:6px 4px;
+  border-bottom:1px dashed rgba(255,255,255,.08);
+}
+.contestItem:last-child{border-bottom:none}
+.contestItem input{margin-top:2px}
+.pill{
+  font-size:11px;
+  color:var(--muted);
+  border:1px solid var(--line);
+  padding:2px 6px;
+  border-radius:999px;
+}

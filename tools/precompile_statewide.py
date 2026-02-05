@@ -59,15 +59,20 @@ def scope_code(row):
 def main():
     # pick the biggest .txt/.tsv in results_raw if exact file isn't present
     candidates = []
+    fallback_candidates = []
     for p in IN_DIR.glob("*"):
+        if p.is_file():
+            fallback_candidates.append(p)
         if p.suffix.lower() in [".txt", ".tsv"]:
             candidates.append(p)
     if not candidates:
-        raise SystemExit("No .txt/.tsv files found in results_raw/. Put STATEWIDE_PRECINCT_SORT.txt there.")
+        candidates = fallback_candidates
+    if not candidates:
+        raise SystemExit("No files found in results_raw/. Put STATEWIDE_PRECINCT_SORT.txt there.")
 
     inp = None
     for p in candidates:
-        if p.name.upper() == "STATEWIDE_PRECINCT_SORT.TXT":
+        if p.name.upper() in ["STATEWIDE_PRECINCT_SORT.TXT", "STATEWIDE_PRECINCT_SORT.TSV", "STATEWIDE_PRECINCT_SORT"]:
             inp = p
             break
     if inp is None:
