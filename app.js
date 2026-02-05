@@ -100,7 +100,9 @@ function getFirstCoordinate(geojson){
 
 function reprojectCoordinates(coords, transform){
   if(typeof coords[0] === "number"){
-    const [lon, lat] = transform(coords);
+    const input = coords.length > 2 ? coords.slice(0,2) : coords;
+    const projected = transform(input);
+    const [lon, lat] = Array.isArray(projected) ? projected : input;
     return [lon, lat];
   }
   return coords.map(coord => reprojectCoordinates(coord, transform));
