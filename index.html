@@ -18,8 +18,8 @@
       <label>
         Mode
         <select id="mode">
+          <option value="tsv" selected>Load TSV (one-time build)</option>
           <option value="precompiled">Precompiled (fast)</option>
-          <option value="tsv">Load TSV (one-time build)</option>
         </select>
       </label>
 
@@ -27,6 +27,8 @@
         Results file (TSV/TXT)
         <input id="tsvFile" type="file" accept=".tsv,.txt" />
       </label>
+
+      <button id="downloadBtn" class="fileOnly">Download statewide TSV</button>
 
       <label>
         Scope
@@ -48,6 +50,19 @@
       <label>
         Contest
         <select id="contest"></select>
+      </label>
+
+      <label>
+        Map view
+        <select id="mapTarget">
+          <option value="contest" selected>Single contest</option>
+          <option value="folder">Folder (combined)</option>
+        </select>
+      </label>
+
+      <label>
+        Folder
+        <select id="folderSelect" disabled></select>
       </label>
 
       <label>
@@ -94,6 +109,34 @@
       <div class="panelSection">
         <div class="panelTitle">Hover</div>
         <div id="hover" class="mono">—</div>
+      </div>
+
+      <div class="panelSection">
+        <div class="panelTitle">Contest library</div>
+        <div class="stack">
+          <input id="contestSearch" type="search" placeholder="Search contests" />
+          <div class="row">
+            <button id="selectAllBtn" type="button">Select all</button>
+            <button id="clearSelectBtn" type="button">Clear</button>
+          </div>
+          <div id="contestCount" class="small"></div>
+          <div id="contestList" class="contestList"></div>
+        </div>
+      </div>
+
+      <div class="panelSection">
+        <div class="panelTitle">Folders</div>
+        <div class="stack">
+          <div class="row">
+            <input id="folderName" type="text" placeholder="New folder name" />
+            <button id="addFolderBtn" type="button">Add</button>
+          </div>
+          <div class="row">
+            <button id="assignFolderBtn" type="button">Add selected contests</button>
+            <button id="removeFolderBtn" type="button">Remove folder</button>
+          </div>
+          <div id="folderSummary" class="small"></div>
+        </div>
       </div>
 
       <div class="panelSection">
