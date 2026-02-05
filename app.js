@@ -121,6 +121,368 @@ function reprojectGeoJSON(geojson, transform){
   };
 }
 
+function isFiniteNumber(value){
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function pairNumbers(values){
+  if(!Array.isArray(values) || values.length < 2 || values.length % 2 !== 0) return null;
+  const pairs = new Array(values.length / 2);
+  for(let i=0;i<values.length;i+=2){
+    const lng = values[i];
+    const lat = values[i+1];
+    if(!isFiniteNumber(lng) || !isFiniteNumber(lat)) return null;
+    pairs[i/2] = [lng, lat];
+  }
+  return pairs;
+}
+
+function normalizePairs(coords){
+  if(!Array.isArray(coords)) return null;
+  if(coords.length === 0) return coords;
+  if(typeof coords[0] === "number"){
+    return pairNumbers(coords);
+  }
+  const pairs = new Array(coords.length);
+  for(let i=0;i<coords.length;i++){
+    const pair = coords[i];
+    if(!Array.isArray(pair) || pair.length < 2) return null;
+    const lng = pair[0];
+    const lat = pair[1];
+    if(!isFiniteNumber(lng) || !isFiniteNumber(lat)) return null;
+    pairs[i] = [lng, lat];
+  }
+  return pairs;
+}
+
+function sanitizeLineStringCoords(coords){
+  return normalizePairs(coords);
+}
+
+function sanitizePolygonCoords(coords){
+  if(!Array.isArray(coords) || coords.length === 0) return null;
+  if(typeof coords[0] === "number"){
+    const ring = pairNumbers(coords);
+    return ring ? [ring] : null;
+  }
+  if(Array.isArray(coords[0]) && typeof coords[0][0] === "number"){
+    const ring = normalizePairs(coords);
+    return ring ? [ring] : null;
+  }
+  const rings = new Array(coords.length);
+  for(let i=0;i<coords.length;i++){
+    const ring = normalizePairs(coords[i]);
+    if(!ring) return null;
+    rings[i] = ring;
+  }
+  return rings;
+}
+
+function sanitizeMultiLineCoords(coords){
+  if(!Array.isArray(coords)) return null;
+  if(coords.length === 0) return coords;
+  if(typeof coords[0] === "number" || (Array.isArray(coords[0]) && typeof coords[0][0] === "number")){
+    const line = sanitizeLineStringCoords(coords);
+    return line ? [line] : null;
+  }
+  const lines = new Array(coords.length);
+  for(let i=0;i<coords.length;i++){
+    const line = sanitizeLineStringCoords(coords[i]);
+    if(!line) return null;
+    lines[i] = line;
+  }
+  return lines;
+}
+
+function sanitizeMultiPolygonCoords(coords){
+  if(!Array.isArray(coords)) return null;
+  if(coords.length === 0) return coords;
+  if(typeof coords[0] === "number" || (Array.isArray(coords[0]) && typeof coords[0][0] === "number")){
+    const polygon = sanitizePolygonCoords(coords);
+    return polygon ? [polygon] : null;
+  }
+  const polygons = new Array(coords.length);
+  for(let i=0;i<coords.length;i++){
+    const polygon = sanitizePolygonCoords(coords[i]);
+    if(!polygon) return null;
+    polygons[i] = polygon;
+  }
+  return polygons;
+}
+
+function featureLabel(feature){
+  const props = feature?.properties || {};
+  return feature?.id || props.precinct || props.precinct_name || props.precinct_desc || props.name || "unknown";
+}
+
+function logBadGeometry(feature, reason){
+  console.warn(`Bad geometry removed (${reason}). Feature: ${featureLabel(feature)}`);
+}
+
+function sanitizeGeometry(feature){
+  const geom = feature?.geometry;
+  if(!geom || !geom.type) return null;
+  const coords = geom.coordinates;
+  let sanitized = null;
+  switch(geom.type){
+    case "Point": {
+      const point = normalizePairs(coords);
+      sanitized = point && point[0] ? point[0] : null;
+      break;
+    }
+    case "MultiPoint":
+      sanitized = normalizePairs(coords);
+      break;
+    case "LineString":
+      sanitized = sanitizeLineStringCoords(coords);
+      break;
+    case "MultiLineString":
+      sanitized = sanitizeMultiLineCoords(coords);
+      break;
+    case "Polygon":
+      sanitized = sanitizePolygonCoords(coords);
+      break;
+    case "MultiPolygon":
+      sanitized = sanitizeMultiPolygonCoords(coords);
+      break;
+    case "GeometryCollection": {
+      const geoms = (geom.geometries || []).map(g => sanitizeGeometry({ geometry: g })).filter(Boolean);
+      if(geoms.length === 0) return null;
+      return { ...geom, geometries: geoms };
+    }
+    default:
+      return null;
+  }
+  if(!sanitized) return null;
+  return { ...geom, coordinates: sanitized };
+}
+
+function sanitizeGeoJSON(geojson){
+  if(!geojson || !Array.isArray(geojson.features)) return geojson;
+  const cleaned = [];
+  for(const feature of geojson.features){
+    const geometry = sanitizeGeometry(feature);
+    if(!geometry){
+      logBadGeometry(feature, "invalid coordinates");
+      continue;
+    }
+    cleaned.push({ ...feature, geometry });
+  }
+  return { ...geojson, features: cleaned };
+}
+
+function createGeoJSONWorker(){
+  const source = `
+    const isFiniteNumber = (value) => typeof value === "number" && Number.isFinite(value);
+    const pairNumbers = (values) => {
+      if(!Array.isArray(values) || values.length < 2 || values.length % 2 !== 0) return null;
+      const pairs = new Array(values.length / 2);
+      for(let i=0;i<values.length;i+=2){
+        const lng = values[i];
+        const lat = values[i+1];
+        if(!isFiniteNumber(lng) || !isFiniteNumber(lat)) return null;
+        pairs[i/2] = [lng, lat];
+      }
+      return pairs;
+    };
+    const normalizePairs = (coords) => {
+      if(!Array.isArray(coords)) return null;
+      if(coords.length === 0) return coords;
+      if(typeof coords[0] === "number"){
+        return pairNumbers(coords);
+      }
+      const pairs = new Array(coords.length);
+      for(let i=0;i<coords.length;i++){
+        const pair = coords[i];
+        if(!Array.isArray(pair) || pair.length < 2) return null;
+        const lng = pair[0];
+        const lat = pair[1];
+        if(!isFiniteNumber(lng) || !isFiniteNumber(lat)) return null;
+        pairs[i] = [lng, lat];
+      }
+      return pairs;
+    };
+    const sanitizeLineStringCoords = (coords) => normalizePairs(coords);
+    const sanitizePolygonCoords = (coords) => {
+      if(!Array.isArray(coords) || coords.length === 0) return null;
+      if(typeof coords[0] === "number"){
+        const ring = pairNumbers(coords);
+        return ring ? [ring] : null;
+      }
+      if(Array.isArray(coords[0]) && typeof coords[0][0] === "number"){
+        const ring = normalizePairs(coords);
+        return ring ? [ring] : null;
+      }
+      const rings = new Array(coords.length);
+      for(let i=0;i<coords.length;i++){
+        const ring = normalizePairs(coords[i]);
+        if(!ring) return null;
+        rings[i] = ring;
+      }
+      return rings;
+    };
+    const sanitizeMultiLineCoords = (coords) => {
+      if(!Array.isArray(coords)) return null;
+      if(coords.length === 0) return coords;
+      if(typeof coords[0] === "number" || (Array.isArray(coords[0]) && typeof coords[0][0] === "number")){
+        const line = sanitizeLineStringCoords(coords);
+        return line ? [line] : null;
+      }
+      const lines = new Array(coords.length);
+      for(let i=0;i<coords.length;i++){
+        const line = sanitizeLineStringCoords(coords[i]);
+        if(!line) return null;
+        lines[i] = line;
+      }
+      return lines;
+    };
+    const sanitizeMultiPolygonCoords = (coords) => {
+      if(!Array.isArray(coords)) return null;
+      if(coords.length === 0) return coords;
+      if(typeof coords[0] === "number" || (Array.isArray(coords[0]) && typeof coords[0][0] === "number")){
+        const polygon = sanitizePolygonCoords(coords);
+        return polygon ? [polygon] : null;
+      }
+      const polygons = new Array(coords.length);
+      for(let i=0;i<coords.length;i++){
+        const polygon = sanitizePolygonCoords(coords[i]);
+        if(!polygon) return null;
+        polygons[i] = polygon;
+      }
+      return polygons;
+    };
+    const featureLabel = (feature) => {
+      const props = feature?.properties || {};
+      return feature?.id || props.precinct || props.precinct_name || props.precinct_desc || props.name || "unknown";
+    };
+    const logBadGeometry = (feature, reason) => {
+      console.warn(\`Bad geometry removed (\${reason}). Feature: \${featureLabel(feature)}\`);
+    };
+    const sanitizeGeometry = (feature) => {
+      const geom = feature?.geometry;
+      if(!geom || !geom.type) return null;
+      const coords = geom.coordinates;
+      let sanitized = null;
+      switch(geom.type){
+        case "Point": {
+          const point = normalizePairs(coords);
+          sanitized = point && point[0] ? point[0] : null;
+          break;
+        }
+        case "MultiPoint":
+          sanitized = normalizePairs(coords);
+          break;
+        case "LineString":
+          sanitized = sanitizeLineStringCoords(coords);
+          break;
+        case "MultiLineString":
+          sanitized = sanitizeMultiLineCoords(coords);
+          break;
+        case "Polygon":
+          sanitized = sanitizePolygonCoords(coords);
+          break;
+        case "MultiPolygon":
+          sanitized = sanitizeMultiPolygonCoords(coords);
+          break;
+        case "GeometryCollection": {
+          const geoms = (geom.geometries || []).map(g => sanitizeGeometry({ geometry: g })).filter(Boolean);
+          if(geoms.length === 0) return null;
+          return { ...geom, geometries: geoms };
+        }
+        default:
+          return null;
+      }
+      if(!sanitized) return null;
+      return { ...geom, coordinates: sanitized };
+    };
+    const sanitizeGeoJSON = (geojson) => {
+      if(!geojson || !Array.isArray(geojson.features)) return geojson;
+      const cleaned = [];
+      for(const feature of geojson.features){
+        const geometry = sanitizeGeometry(feature);
+        if(!geometry){
+          logBadGeometry(feature, "invalid coordinates");
+          continue;
+        }
+        cleaned.push({ ...feature, geometry });
+      }
+      return { ...geojson, features: cleaned };
+    };
+    let buffer = "";
+    self.onmessage = (event) => {
+      const { type, data } = event.data || {};
+      if(type === "chunk"){
+        buffer += data || "";
+        return;
+      }
+      if(type === "end"){
+        try{
+          const parsed = JSON.parse(buffer);
+          const cleaned = sanitizeGeoJSON(parsed);
+          self.postMessage({ type: "result", data: cleaned });
+        } catch (err){
+          self.postMessage({ type: "error", error: err?.message || String(err) });
+        }
+      }
+    };
+  `;
+  const blob = new Blob([source], { type: "application/javascript" });
+  return new Worker(URL.createObjectURL(blob));
+}
+
+async function loadGeoJSONStreaming(url){
+  const res = await fetch(url);
+  if(!res.ok) throw new Error("precincts fetch failed");
+  if(!res.body){
+    const text = await res.text();
+    const worker = createGeoJSONWorker();
+    return new Promise((resolve, reject) => {
+      worker.onmessage = (event) => {
+        const { type, data, error } = event.data || {};
+        if(type === "result"){
+          resolve(data);
+          worker.terminate();
+        }
+        if(type === "error"){
+          reject(new Error(error));
+          worker.terminate();
+        }
+      };
+      worker.postMessage({ type: "chunk", data: text });
+      worker.postMessage({ type: "end" });
+    });
+  }
+  const worker = createGeoJSONWorker();
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  return new Promise(async (resolve, reject) => {
+    worker.onmessage = (event) => {
+      const { type, data, error } = event.data || {};
+      if(type === "result"){
+        resolve(data);
+        worker.terminate();
+      }
+      if(type === "error"){
+        reject(new Error(error));
+        worker.terminate();
+      }
+    };
+    try{
+      while(true){
+        const { value, done } = await reader.read();
+        if(done) break;
+        worker.postMessage({ type: "chunk", data: decoder.decode(value, { stream: true }) });
+      }
+      worker.postMessage({ type: "chunk", data: decoder.decode() });
+      worker.postMessage({ type: "end" });
+    } catch (err){
+      reader.cancel().catch(() => {});
+      worker.terminate();
+      reject(err);
+    }
+  });
+}
+
 function partyColor(party){
   const p = norm(party);
   if (p === "REP") return "#b91c1c";
@@ -691,9 +1053,7 @@ async function init(){
   }).addTo(map);
 
   try{
-    const res = await fetch(PRECINCTS_URL);
-    if(!res.ok) throw new Error("precincts fetch failed");
-    precinctFeatures = await res.json();
+    precinctFeatures = await loadGeoJSONStreaming(PRECINCTS_URL);
     const sample = getFirstCoordinate(precinctFeatures);
     const needsReproject = sample && (Math.abs(sample[0]) > 180 || Math.abs(sample[1]) > 90);
     if(needsReproject){
