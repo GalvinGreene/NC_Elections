@@ -11,6 +11,7 @@ const CONTEST_DIR   = "./data/precompiled/contests/";
 
 // Map
 let map, precinctLayer, precinctFeatures;
+let baseLayer;
 
 // In-memory aggregates (TSV mode)
 let contestsTSV = [];
@@ -32,6 +33,11 @@ const elFolderSelect = document.getElementById("folderSelect");
 const elShade  = document.getElementById("shade");
 const elJoin   = document.getElementById("joinField");
 const elLines  = document.getElementById("toggleLines");
+const elLineWeight = document.getElementById("lineWeight");
+const elLineWeightValue = document.getElementById("lineWeightValue");
+const elLayerOpacity = document.getElementById("layerOpacity");
+const elLayerOpacityValue = document.getElementById("layerOpacityValue");
+const elToggleBasemap = document.getElementById("toggleBasemap");
 const elLoad   = document.getElementById("loadBtn");
 const elReset  = document.getElementById("resetBtn");
 const elDownload = document.getElementById("downloadBtn");
@@ -77,6 +83,14 @@ let rawTSVHeader = [];
 let rawTSVContestIndex = -1;
 
 function norm(s){ return (s ?? "").toString().trim().toUpperCase(); }
+function normalizeHeader(s){
+  return (s ?? "")
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
 function num(x){
   const n = Number((x ?? "").toString().replace(/,/g,""));
   return Number.isFinite(n) ? n : 0;
@@ -96,6 +110,11 @@ function getFirstCoordinate(geojson){
     }
   }
   return null;
+}
+
+function joinValueFromFeature(props){
+  if(elJoin.value === "join_prec_id") return props?.prec_id;
+  return props?.enr_desc;
 }
 
 function reprojectCoordinates(coords, transform){
@@ -154,12 +173,16 @@ function parseTSV(text){
   const lines = text.split(/\r?\n/).filter(l => l.trim().length);
   if(!lines.length) return [];
   const header = lines[0].split("\t").map(h => h.trim());
+  const normalized = header.map(h => normalizeHeader(h));
   const rows = [];
   for(let i=1;i<lines.length;i++){
     const cols = lines[i].split("\t");
     const r = {};
     for(let c=0;c<header.length;c++){
       r[header[c]] = (cols[c] ?? "").trim();
+      if(normalized[c]){
+        r[normalized[c]] = (cols[c] ?? "").trim();
+      }
     }
     rows.push(r);
   }
@@ -175,7 +198,8 @@ function parseTSVHeader(text){
 function rememberRawTSV(text){
   rawTSVText = text;
   rawTSVHeader = parseTSVHeader(text);
-  rawTSVContestIndex = rawTSVHeader.findIndex(h => h.toLowerCase() === "contest_title");
+  const normalized = rawTSVHeader.map(h => normalizeHeader(h));
+  rawTSVContestIndex = normalized.findIndex(h => h === "contest_title");
   elSaveRawBtn.disabled = !rawTSVText;
 }
 
@@ -195,6 +219,8 @@ function downloadTextFile(name, text){
 function getCol(r, names){
   for(const n of names){
     if(r[n] !== undefined) return r[n];
+    const normalized = normalizeHeader(n);
+    if(normalized && r[normalized] !== undefined) return r[normalized];
   }
   return "";
 }
@@ -225,8 +251,8 @@ function buildAggregatesTSV(rows){
     const contestId = norm(getCol(r, ["contest_id","contest","contestid"]));
     const title = (getCol(r, ["contest_title","contest_name","contest","Contest"]) ?? "").trim();
 
-    const cand = (getCol(r, ["candidate","choice","Candidate"]) ?? "").trim();
-    const party = (getCol(r, ["candidate_party","choice_party","party","Party"]) ?? "").trim();
+    const cand = (getCol(r, ["candidate","candidate_name","choice","Candidate"]) ?? "").trim();
+    const party = (getCol(r, ["candidate_party","candidate_party_lbl","choice_party","party","Party"]) ?? "").trim();
     const votes = num(getCol(r, ["vote_ct","total votes","votes","Total Votes"]));
 
     if(!county || (!precinctName && !precinctCode) || !contestId || !title || !cand) continue;
@@ -522,17 +548,31 @@ function styleForFeatureFactory(active){
   return function(feature){
     const props = feature.properties || {};
     const county = norm(props.county_nam);
-    const precinct = norm(props[elJoin.value]);
+    const precinct = norm(joinValueFromFeature(props));
     const countyFilter = elCounty.value;
     const showLines = elLines.checked;
+    const lineWeight = Math.max(0, Number(elLineWeight.value) || 0);
+    const opacityScale = clamp01(Number(elLayerOpacity.value) || 0);
     const contestKey = elContest.value;
 
     if(countyFilter && county !== countyFilter){
-      return { fillColor:"#111827", color: showLines ? "#334155" : "transparent", weight: showLines ? 0.2 : 0, fillOpacity:0.03, opacity:0.08 };
+      return {
+        fillColor:"#111827",
+        color: showLines ? "#334155" : "transparent",
+        weight: showLines ? lineWeight * 0.4 : 0,
+        fillOpacity:0.03 * opacityScale,
+        opacity:0.08 * opacityScale
+      };
     }
 
     if(!active){
-      return { fillColor:"#111827", color: showLines ? "#334155" : "transparent", weight: showLines ? 0.4 : 0, fillOpacity:0.18, opacity:0.35 };
+      return {
+        fillColor:"#111827",
+        color: showLines ? "#334155" : "transparent",
+        weight: showLines ? lineWeight * 0.7 : 0,
+        fillOpacity:0.18 * opacityScale,
+        opacity:0.35 * opacityScale
+      };
     }
 
     const shade = elShade.value;
@@ -540,25 +580,49 @@ function styleForFeatureFactory(active){
     const m = active.precinctAgg.get(k);
 
     if(!m || !m.winner){
-      return { fillColor:"#111827", color: showLines ? "#334155" : "transparent", weight: showLines ? 0.35 : 0, fillOpacity:0.12, opacity:0.25 };
+      return {
+        fillColor:"#111827",
+        color: showLines ? "#334155" : "transparent",
+        weight: showLines ? lineWeight * 0.6 : 0,
+        fillOpacity:0.12 * opacityScale,
+        opacity:0.25 * opacityScale
+      };
     }
 
     if(shade === "party"){
       const base = partyColor(m.winner.party);
       const turnoutFactor = clamp01((m.total || 0) / 1200);
       const tinted = tint(base, 0.55 - 0.35*turnoutFactor);
-      return { fillColor:tinted, color: showLines ? "#0b1220" : "transparent", weight: showLines ? 0.6 : 0, fillOpacity:0.78, opacity:0.6 };
+      return {
+        fillColor:tinted,
+        color: showLines ? "#0b1220" : "transparent",
+        weight: showLines ? lineWeight : 0,
+        fillOpacity:0.78 * opacityScale,
+        opacity:0.6 * opacityScale
+      };
     }
 
     if(shade === "margin"){
       const base = partyColor(m.winner.party);
       const t = 0.75 - 0.65*clamp01(m.marginPct || 0);
-      return { fillColor:tint(base, t), color: showLines ? "#0b1220" : "transparent", weight: showLines ? 0.6 : 0, fillOpacity:0.80, opacity:0.6 };
+      return {
+        fillColor:tint(base, t),
+        color: showLines ? "#0b1220" : "transparent",
+        weight: showLines ? lineWeight : 0,
+        fillOpacity:0.80 * opacityScale,
+        opacity:0.6 * opacityScale
+      };
     }
 
     const turnout = clamp01((m.total || 0) / 1500);
     const ccol = tint("#22c55e", 0.85 - 0.7*turnout);
-    return { fillColor:ccol, color: showLines ? "#0b1220" : "transparent", weight: showLines ? 0.6 : 0, fillOpacity:0.78, opacity:0.6 };
+    return {
+      fillColor:ccol,
+      color: showLines ? "#0b1220" : "transparent",
+      weight: showLines ? lineWeight : 0,
+      fillOpacity:0.78 * opacityScale,
+      opacity:0.6 * opacityScale
+    };
   }
 }
 
@@ -582,7 +646,7 @@ function bindFeatureEvents(feature, layer){
 
     const p = feature.properties || {};
     const county = norm(p.county_nam);
-    const precinct = norm(p[elJoin.value]);
+    const precinct = norm(joinValueFromFeature(p));
     const k = active.isFolder ? `${county}|${precinct}` : `${contestKey}|${county}|${precinct}`;
     const m = active.precinctAgg.get(k);
 
@@ -633,7 +697,7 @@ async function updatePanels(active){
       const props = layer.feature.properties || {};
       const lyrCounty = norm(props.county_nam);
       if(countyFilter && lyrCounty !== countyFilter) return;
-      const precinct = norm(props[elJoin.value]);
+      const precinct = norm(joinValueFromFeature(props));
       const k = active.isFolder ? `${lyrCounty}|${precinct}` : `${contestKey}|${lyrCounty}|${precinct}`;
       const m = active.precinctAgg.get(k);
       if(m && m.winner) colored++; else missing++;
@@ -685,10 +749,13 @@ async function getActiveAgg(){
 
 async function init(){
   map = L.map("map", { preferCanvas:true }).setView([35.5, -79.4], 7);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  baseLayer = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom:18,
     attribution:"&copy; OpenStreetMap"
-  }).addTo(map);
+  });
+  if(elToggleBasemap.checked){
+    baseLayer.addTo(map);
+  }
 
   try{
     const res = await fetch(PRECINCTS_URL);
@@ -738,6 +805,19 @@ function setModeUI(){
   document.querySelectorAll(".fileOnly").forEach(el => el.style.display = isTSV ? "" : "none");
 }
 setModeUI();
+
+function updateLineWeightLabel(){
+  if(!elLineWeightValue) return;
+  elLineWeightValue.textContent = Number(elLineWeight.value).toFixed(1);
+}
+
+function updateLayerOpacityLabel(){
+  if(!elLayerOpacityValue) return;
+  elLayerOpacityValue.textContent = Number(elLayerOpacity.value).toFixed(2);
+}
+
+updateLineWeightLabel();
+updateLayerOpacityLabel();
 
 elMode.addEventListener("change", async () => {
   setModeUI();
@@ -815,6 +895,11 @@ elReset.addEventListener("click", async () => {
   elCounty.value = "";
   elShade.value = "party";
   elJoin.value = "join_enr_desc";
+  elLines.checked = true;
+  elLineWeight.value = "0.6";
+  elLayerOpacity.value = "0.8";
+  updateLineWeightLabel();
+  updateLayerOpacityLabel();
   selectedContestKeys.clear();
   renderContestLibrary();
   renderFolderSelect();
@@ -827,6 +912,16 @@ elContest.addEventListener("change", refresh);
 elShade.addEventListener("change", refresh);
 elJoin.addEventListener("change", refresh);
 elLines.addEventListener("change", refresh);
+elLineWeight.addEventListener("input", () => { updateLineWeightLabel(); refresh(); });
+elLayerOpacity.addEventListener("input", () => { updateLayerOpacityLabel(); refresh(); });
+elToggleBasemap.addEventListener("change", () => {
+  if(!baseLayer) return;
+  if(elToggleBasemap.checked){
+    baseLayer.addTo(map);
+  } else {
+    baseLayer.remove();
+  }
+});
 elMapTarget.addEventListener("change", async () => {
   elFolderSelect.disabled = elMapTarget.value !== "folder" || !Object.keys(folders).length;
   await refresh();
