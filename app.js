@@ -990,6 +990,7 @@ async function getAggForContestKeyRaw(contestKey, contestEntry){
 async function getAggForContestKeys(contestKeys, options = {}){
   if(!contestKeys.length) return null;
   const combinedPrecinct = new Map();
+  const combinedLookup = new Map();
   const combinedCounty = new Map();
   let totalVotes = 0;
   const contests = [];
@@ -1010,6 +1011,7 @@ async function getAggForContestKeys(contestKeys, options = {}){
     if(!agg) continue;
     contests.push(agg.contest);
     totalVotes += agg.contest?.totalVotes || 0;
+    const objectMap = new Map();
 
     for(const [pkey, val] of agg.precinctAgg){
       if(agg.contestKey && !pkey.startsWith(agg.contestKey + "|")) continue;
@@ -1024,6 +1026,19 @@ async function getAggForContestKeys(contestKeys, options = {}){
         prev.partyVotes.set(party, (prev.partyVotes.get(party) || 0) + (val.total || 0));
       }
       combinedPrecinct.set(combinedKey, prev);
+      objectMap.set(val, prev);
+    }
+
+    if(agg.precinctLookup){
+      for(const [aliasKey, val] of agg.precinctLookup){
+        if(agg.contestKey && !aliasKey.startsWith(agg.contestKey + "|")) continue;
+        const parts = aliasKey.split("|");
+        const county = parts[1];
+        const precinct = parts.slice(2).join("|");
+        const combinedEntry = objectMap.get(val);
+        if(!combinedEntry) continue;
+        combinedLookup.set(`${county}|${precinct}`, combinedEntry);
+      }
     }
 
     for(const [ckey, val] of agg.countyAgg){
@@ -1078,6 +1093,7 @@ async function getAggForContestKeys(contestKeys, options = {}){
 
   return {
     precinctAgg: combinedPrecinct,
+    precinctLookup: combinedLookup,
     countyAgg: combinedCounty,
     contest: contestInfo,
     contests,
