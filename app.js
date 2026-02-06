@@ -51,6 +51,9 @@ const elHover  = document.getElementById("hover");
 const elClick  = document.getElementById("click");
 const elVoteCounty = document.getElementById("voteCounty");
 const elVotePrecinct = document.getElementById("votePrecinct");
+const elMismatchSummary = document.getElementById("mismatchSummary");
+const elMismatchList = document.getElementById("mismatchList");
+const elApplyMismatchBtn = document.getElementById("applyMismatchBtn");
 const elContestSearch = document.getElementById("contestSearch");
 const elContestList = document.getElementById("contestList");
 const elContestCount = document.getElementById("contestCount");
@@ -89,6 +92,7 @@ let rawTSVContestIndex = -1;
 let lastNameSync = null;
 let hoverContext = null;
 let lastActiveAgg = null;
+let tsvNameMismatches = [];
 
 function norm(s){ return (s ?? "").toString().trim().toUpperCase(); }
 function normalizeHeader(s){
@@ -196,6 +200,106 @@ function updateVoteTotals(active){
       `Precinct: ${hoverContext.precinctLabel}`,
       "No precinct results matched."
     );
+  }
+}
+
+function buildGeojsonPrecinctIndex(){
+  if(!precinctFeatures?.features?.length) return new Map();
+  const byKey = new Map();
+  for(const feature of precinctFeatures.features){
+    const props = feature.properties || {};
+    const county = norm(props.county_nam);
+    const precId = norm(props.prec_id);
+    if(!county || !precId) continue;
+    const key = `${county}|${precId}`;
+    if(!byKey.has(key)){
+      byKey.set(key, {
+        feature,
+        geoName: (props.enr_desc ?? "").toString()
+      });
+    }
+  }
+  return byKey;
+}
+
+function computeTSVNameMismatches(rows){
+  const geoIndex = buildGeojsonPrecinctIndex();
+  if(!geoIndex.size) return [];
+  const seen = new Set();
+  const mismatches = [];
+  for(const r of rows){
+    const county = norm(getCol(r, ["county","County"]));
+    const precinctCode = norm(getCol(r, ["precinct_code","precinct_cd","precinct_id"]));
+    const precinctName = (getCol(r, ["precinct_name","precinct","Precinct","precinct_desc"]) ?? "").trim();
+    if(!county || !precinctCode || !precinctName) continue;
+    const key = `${county}|${precinctCode}`;
+    if(seen.has(key)) continue;
+    seen.add(key);
+    const geoEntry = geoIndex.get(key);
+    if(!geoEntry) continue;
+    const geoName = geoEntry.geoName;
+    if(norm(geoName) !== norm(precinctName)){
+      mismatches.push({
+        county,
+        precId: precinctCode,
+        geoName,
+        tsvName: precinctName,
+        feature: geoEntry.feature
+      });
+    }
+  }
+  return mismatches.sort((a,b) => a.county.localeCompare(b.county) || a.precId.localeCompare(b.precId));
+}
+
+function renderMismatchPanel(){
+  if(!elMismatchSummary || !elMismatchList || !elApplyMismatchBtn) return;
+  if(!rawTSVText){
+    elMismatchSummary.textContent = "Load a TSV to review unmatched precinct names.";
+    elMismatchList.innerHTML = "";
+    elApplyMismatchBtn.disabled = true;
+    return;
+  }
+  if(!tsvNameMismatches.length){
+    elMismatchSummary.textContent = "No unmatched precinct names found.";
+    elMismatchList.innerHTML = "";
+    elApplyMismatchBtn.disabled = true;
+    return;
+  }
+  elMismatchSummary.textContent = `${tsvNameMismatches.length} precinct name mismatches (TSV vs GeoJSON).`;
+  elApplyMismatchBtn.disabled = false;
+  elMismatchList.innerHTML = tsvNameMismatches.map((m, idx) => `
+    <div class="mismatchRow">
+      <div class="mismatchMeta">
+        <div><b>${m.county}</b> · prec_id ${m.precId}</div>
+        <div class="small">GeoJSON: ${m.geoName || "—"}</div>
+        <div class="small">TSV: ${m.tsvName || "—"}</div>
+      </div>
+      <input type="text" data-mismatch-index="${idx}" value="${m.tsvName}" />
+    </div>
+  `).join("");
+}
+
+function applyMismatchUpdates(){
+  if(!tsvNameMismatches.length) return;
+  const inputs = elMismatchList.querySelectorAll("input[data-mismatch-index]");
+  let updated = 0;
+  inputs.forEach(input => {
+    const idx = Number(input.dataset.mismatchIndex);
+    if(!Number.isInteger(idx)) return;
+    const entry = tsvNameMismatches[idx];
+    if(!entry?.feature) return;
+    const nextName = (input.value || "").trim();
+    if(!nextName) return;
+    const props = entry.feature.properties || {};
+    if(norm(props.enr_desc) !== norm(nextName)){
+      props.enr_desc = nextName;
+      updated += 1;
+    }
+  });
+  if(updated){
+    tsvNameMismatches = computeTSVNameMismatches(parseTSV(rawTSVText));
+    renderMismatchPanel();
+    refresh();
   }
 }
 
@@ -1015,11 +1119,13 @@ async function refresh(){
   lastActiveAgg = active;
   if(!precinctLayer){
     updateVoteTotals(active);
+    renderMismatchPanel();
     return;
   }
   precinctLayer.setStyle(styleForFeatureFactory(active));
   await updatePanels(active);
   updateVoteTotals(active);
+  renderMismatchPanel();
 }
 
 async function getActiveAgg(){
@@ -1170,6 +1276,7 @@ elLoad.addEventListener("click", async () => {
     const text = await loadTextFromFile(file);
     rememberRawTSV(text);
     const rows = parseTSV(text);
+    tsvNameMismatches = computeTSVNameMismatches(rows);
     lastNameSync = elSyncNames?.checked ? applyPrecinctNameSync(rows) : null;
     buildAggregatesTSV(rows);
     fillContestDropdown();
@@ -1190,6 +1297,7 @@ elDownload.addEventListener("click", async () => {
     const text = await res.text();
     rememberRawTSV(text);
     const rows = parseTSV(text);
+    tsvNameMismatches = computeTSVNameMismatches(rows);
     lastNameSync = elSyncNames?.checked ? applyPrecinctNameSync(rows) : null;
     buildAggregatesTSV(rows);
     fillContestDropdown();
@@ -1214,6 +1322,7 @@ elReset.addEventListener("click", async () => {
   rawTSVText = "";
   rawTSVHeader = [];
   rawTSVContestIndex = -1;
+  tsvNameMismatches = [];
   elSaveRawBtn.disabled = true;
   elContest.innerHTML = "";
   elScope.value = "ALL";
@@ -1260,6 +1369,9 @@ elToggleBasemap.addEventListener("change", () => {
     baseLayer.remove();
   }
 });
+if(elApplyMismatchBtn){
+  elApplyMismatchBtn.addEventListener("click", applyMismatchUpdates);
+}
 elMapTarget.addEventListener("change", async () => {
   elFolderSelect.disabled = elMapTarget.value !== "folder" || !Object.keys(folders).length;
   await refresh();
