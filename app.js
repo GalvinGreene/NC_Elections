@@ -54,6 +54,9 @@ const elVotePrecinct = document.getElementById("votePrecinct");
 const elMismatchSummary = document.getElementById("mismatchSummary");
 const elMismatchList = document.getElementById("mismatchList");
 const elApplyMismatchBtn = document.getElementById("applyMismatchBtn");
+const elCodeMismatchSummary = document.getElementById("codeMismatchSummary");
+const elCodeMismatchList = document.getElementById("codeMismatchList");
+const elApplyCodeMismatchBtn = document.getElementById("applyCodeMismatchBtn");
 const elContestSearch = document.getElementById("contestSearch");
 const elContestList = document.getElementById("contestList");
 const elContestCount = document.getElementById("contestCount");
@@ -93,6 +96,7 @@ let lastNameSync = null;
 let hoverContext = null;
 let lastActiveAgg = null;
 let tsvNameMismatches = [];
+let tsvCodeMismatches = [];
 
 function norm(s){ return (s ?? "").toString().trim().toUpperCase(); }
 function normalizeHeader(s){
@@ -222,6 +226,22 @@ function buildGeojsonPrecinctIndex(){
   return byKey;
 }
 
+function buildGeojsonPrecinctCodeIndex(){
+  if(!precinctFeatures?.features?.length) return new Map();
+  const byCounty = new Map();
+  for(const feature of precinctFeatures.features){
+    const props = feature.properties || {};
+    const county = norm(props.county_nam);
+    const precId = norm(props.prec_id);
+    if(!county || !precId) continue;
+    if(!byCounty.has(county)){
+      byCounty.set(county, new Set());
+    }
+    byCounty.get(county).add(precId);
+  }
+  return byCounty;
+}
+
 function computeTSVNameMismatches(rows){
   const geoIndex = buildGeojsonPrecinctIndex();
   if(!geoIndex.size) return [];
@@ -247,6 +267,25 @@ function computeTSVNameMismatches(rows){
         feature: geoEntry.feature
       });
     }
+  }
+  return mismatches.sort((a,b) => a.county.localeCompare(b.county) || a.precId.localeCompare(b.precId));
+}
+
+function computeTSVCodeMismatches(rows){
+  const geoIndex = buildGeojsonPrecinctCodeIndex();
+  if(!geoIndex.size) return [];
+  const seen = new Set();
+  const mismatches = [];
+  for(const r of rows){
+    const county = norm(getCol(r, ["county","County"]));
+    const precinctCode = norm(getCol(r, ["precinct_code","precinct_cd","precinct_id"]));
+    if(!county || !precinctCode) continue;
+    const key = `${county}|${precinctCode}`;
+    if(seen.has(key)) continue;
+    seen.add(key);
+    const countySet = geoIndex.get(county);
+    if(countySet && countySet.has(precinctCode)) continue;
+    mismatches.push({ county, precId: precinctCode });
   }
   return mismatches.sort((a,b) => a.county.localeCompare(b.county) || a.precId.localeCompare(b.precId));
 }
@@ -278,6 +317,33 @@ function renderMismatchPanel(){
   `).join("");
 }
 
+function renderCodeMismatchPanel(){
+  if(!elCodeMismatchSummary || !elCodeMismatchList || !elApplyCodeMismatchBtn) return;
+  if(!rawTSVText){
+    elCodeMismatchSummary.textContent = "Load a TSV to review unmatched precinct codes.";
+    elCodeMismatchList.innerHTML = "";
+    elApplyCodeMismatchBtn.disabled = true;
+    return;
+  }
+  if(!tsvCodeMismatches.length){
+    elCodeMismatchSummary.textContent = "No unmatched precinct codes found.";
+    elCodeMismatchList.innerHTML = "";
+    elApplyCodeMismatchBtn.disabled = true;
+    return;
+  }
+  elCodeMismatchSummary.textContent = `${tsvCodeMismatches.length} precinct codes missing from GeoJSON.`;
+  elApplyCodeMismatchBtn.disabled = false;
+  elCodeMismatchList.innerHTML = tsvCodeMismatches.map((m, idx) => `
+    <div class="mismatchRow">
+      <div class="mismatchMeta">
+        <div><b>${m.county}</b> · Current code ${m.precId}</div>
+        <div class="small">Enter the matching prec_id from GeoJSON.</div>
+      </div>
+      <input type="text" data-code-mismatch-index="${idx}" value="${m.precId}" />
+    </div>
+  `).join("");
+}
+
 function applyMismatchUpdates(){
   if(!tsvNameMismatches.length) return;
   const inputs = elMismatchList.querySelectorAll("input[data-mismatch-index]");
@@ -300,6 +366,59 @@ function applyMismatchUpdates(){
     renderMismatchPanel();
     refresh();
   }
+}
+
+function updateRawTSVPrecinctCodes(mappings){
+  if(!rawTSVText) return null;
+  const lines = rawTSVText.split(/\r?\n/);
+  const headerLineIndex = lines.findIndex(line => line.trim().length);
+  if(headerLineIndex < 0) return null;
+  const headerCols = lines[headerLineIndex].split("\t");
+  const normalized = headerCols.map(h => normalizeHeader(h));
+  const codeIndex = normalized.findIndex(h => ["precinct_code","precinct_cd","precinct_id"].includes(h));
+  const countyIndex = normalized.findIndex(h => h === "county");
+  if(codeIndex < 0 || countyIndex < 0) return null;
+  const updated = lines.map((line, idx) => {
+    if(idx <= headerLineIndex || !line.trim()) return line;
+    const cols = line.split("\t");
+    const county = norm(cols[countyIndex]);
+    const code = norm(cols[codeIndex]);
+    const key = `${county}|${code}`;
+    if(mappings.has(key)){
+      cols[codeIndex] = mappings.get(key);
+    }
+    return cols.join("\t");
+  });
+  return updated.join("\n");
+}
+
+function applyCodeMismatchUpdates(){
+  if(!tsvCodeMismatches.length) return;
+  const inputs = elCodeMismatchList.querySelectorAll("input[data-code-mismatch-index]");
+  const mappings = new Map();
+  inputs.forEach(input => {
+    const idx = Number(input.dataset.codeMismatchIndex);
+    if(!Number.isInteger(idx)) return;
+    const entry = tsvCodeMismatches[idx];
+    if(!entry) return;
+    const nextCode = norm(input.value || "");
+    if(!nextCode) return;
+    const key = `${entry.county}|${entry.precId}`;
+    if(nextCode !== entry.precId){
+      mappings.set(key, nextCode);
+    }
+  });
+  if(!mappings.size) return;
+  const updatedText = updateRawTSVPrecinctCodes(mappings);
+  if(!updatedText) return;
+  rememberRawTSV(updatedText);
+  const rows = parseTSV(updatedText);
+  tsvCodeMismatches = computeTSVCodeMismatches(rows);
+  tsvNameMismatches = computeTSVNameMismatches(rows);
+  buildAggregatesTSV(rows);
+  fillContestDropdown();
+  renderFolderSelect();
+  refresh();
 }
 
 function reprojectCoordinates(coords, transform){
@@ -1119,12 +1238,14 @@ async function refresh(){
   if(!precinctLayer){
     updateVoteTotals(active);
     renderMismatchPanel();
+    renderCodeMismatchPanel();
     return;
   }
   precinctLayer.setStyle(styleForFeatureFactory(active));
   await updatePanels(active);
   updateVoteTotals(active);
   renderMismatchPanel();
+  renderCodeMismatchPanel();
 }
 
 async function getActiveAgg(){
@@ -1276,6 +1397,7 @@ elLoad.addEventListener("click", async () => {
     rememberRawTSV(text);
     const rows = parseTSV(text);
     tsvNameMismatches = computeTSVNameMismatches(rows);
+    tsvCodeMismatches = computeTSVCodeMismatches(rows);
     lastNameSync = elSyncNames?.checked ? applyPrecinctNameSync(rows) : null;
     buildAggregatesTSV(rows);
     fillContestDropdown();
@@ -1297,6 +1419,7 @@ elDownload.addEventListener("click", async () => {
     rememberRawTSV(text);
     const rows = parseTSV(text);
     tsvNameMismatches = computeTSVNameMismatches(rows);
+    tsvCodeMismatches = computeTSVCodeMismatches(rows);
     lastNameSync = elSyncNames?.checked ? applyPrecinctNameSync(rows) : null;
     buildAggregatesTSV(rows);
     fillContestDropdown();
@@ -1322,6 +1445,7 @@ elReset.addEventListener("click", async () => {
   rawTSVHeader = [];
   rawTSVContestIndex = -1;
   tsvNameMismatches = [];
+  tsvCodeMismatches = [];
   elSaveRawBtn.disabled = true;
   elContest.innerHTML = "";
   elScope.value = "ALL";
@@ -1370,6 +1494,9 @@ elToggleBasemap.addEventListener("change", () => {
 });
 if(elApplyMismatchBtn){
   elApplyMismatchBtn.addEventListener("click", applyMismatchUpdates);
+}
+if(elApplyCodeMismatchBtn){
+  elApplyCodeMismatchBtn.addEventListener("click", applyCodeMismatchUpdates);
 }
 elMapTarget.addEventListener("change", async () => {
   elFolderSelect.disabled = elMapTarget.value !== "folder" || !Object.keys(folders).length;
