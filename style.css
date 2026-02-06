@@ -164,3 +164,21 @@ main{
   height:24px;
   cursor:pointer;
 }
+
+.mismatchRow{
+  display:flex;
+  gap:8px;
+  align-items:flex-start;
+  padding:8px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:rgba(11,15,20,.4);
+}
+.mismatchRow input[type="text"]{
+  min-width:160px;
+}
+.mismatchMeta{
+  flex:1;
+  font-size:12px;
+  color:var(--text);
+}
