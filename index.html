@@ -79,8 +79,13 @@
         Join field
         <select id="joinField">
           <option value="join_enr_desc">enr_desc (name)</option>
-          <option value="join_prec_id">prec_id (code)</option>
+          <option value="join_prec_id" selected>prec_id (code)</option>
         </select>
+      </label>
+
+      <label class="toggle fileOnly">
+        Sync precinct names (TSV)
+        <input type="checkbox" id="syncPrecinctNames">
       </label>
 
       <label class="toggle">
@@ -127,6 +132,12 @@
       <div class="panelSection">
         <div class="panelTitle">Hover</div>
         <div id="hover" class="mono">—</div>
+      </div>
+
+      <div class="panelSection">
+        <div class="panelTitle">Vote totals</div>
+        <div id="voteCounty" class="smallmono">County totals appear here.</div>
+        <div id="votePrecinct" class="smallmono">Precinct totals appear here.</div>
       </div>
 
       <div class="panelSection">
