@@ -10,8 +10,8 @@ Output:
   data/precompiled/contests/<contest_file>.json
 
 Each contest pack is lightweight and contains:
-  precinctAgg: { "contestKey|COUNTY|PRECINCT": {total, winner:{name,party,votes}, marginPct} }
-  countyAgg:   { "contestKey|COUNTY": {total, winnerParty} }
+  precinctAgg: { "contestKey|COUNTY|PRECINCT": {total, winner:{name,party,votes}, marginPct, candVotes} }
+  countyAgg:   { "contestKey|COUNTY": {total, winnerParty, candVotes} }
 
 Run from project root:
   python tools/precompile_statewide.py
@@ -82,7 +82,7 @@ def main():
 
     precinctAgg = {}   # contestKey|COUNTY|PRECINCT -> temp {total, candVotes{cand:{votes,party}}}
     precinctLookup = {}  # alias contestKey|COUNTY|ALIAS -> canonical contestKey|COUNTY|PRECINCT
-    countyAgg = {}     # contestKey|COUNTY -> temp {total, partyVotes{party:votes}}
+    countyAgg = {}     # contestKey|COUNTY -> temp {total, partyVotes{party:votes}, candVotes{cand:{votes,party}}}
     contestMeta = {}   # contestKey -> {id,title,scopeCode,counties:set,totalVotes,file}
 
     with inp.open("r", encoding="utf-8", errors="replace", newline="") as f:
@@ -149,11 +149,18 @@ def main():
             ck = f"{contest_key}|{county}"
             cobj = countyAgg.get(ck)
             if cobj is None:
-                cobj = {"total": 0, "partyVotes": {}}
+                cobj = {"total": 0, "partyVotes": {}, "candVotes": {}}
                 countyAgg[ck] = cobj
             cobj["total"] += votes
             if party:
                 cobj["partyVotes"][party] = cobj["partyVotes"].get(party, 0) + votes
+            ccv = cobj["candVotes"].get(cand)
+            if ccv is None:
+                ccv = {"votes": 0, "party": party}
+                cobj["candVotes"][cand] = ccv
+            ccv["votes"] += votes
+            if not ccv.get("party") and party:
+                ccv["party"] = party
 
     # Split per contest into separate small files
     print("Finalizing and writing contest packs…")
@@ -187,7 +194,7 @@ def main():
                     second_votes = max(second_votes, vv)
             total = obj["total"]
             marginPct = ((winner["votes"] - second_votes) / total) if total else 0.0
-            p_out[pk] = {"total": total, "winner": winner, "marginPct": marginPct}
+            p_out[pk] = {"total": total, "winner": winner, "marginPct": marginPct, "candVotes": candVotes}
 
         c_out = {}
         for ck in county_keys_by_contest.get(contest_key, []):
@@ -199,7 +206,11 @@ def main():
                 if vv > best_votes:
                     best_votes = vv
                     best_party = party
-            c_out[ck] = {"total": obj["total"], "winnerParty": best_party}
+            c_out[ck] = {
+                "total": obj["total"],
+                "winnerParty": best_party,
+                "candVotes": obj["candVotes"],
+            }
 
         lookup_out = {}
         for alias_key, canonical_key in precinctLookup.items():
