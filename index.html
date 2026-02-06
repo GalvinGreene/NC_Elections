@@ -62,6 +62,14 @@
       </label>
 
       <label>
+        Map aggregation
+        <select id="mapAggregation">
+          <option value="precinct" selected>Precincts</option>
+          <option value="county">Counties (winner)</option>
+        </select>
+      </label>
+
+      <label>
         Folder
         <select id="folderSelect" disabled></select>
       </label>
@@ -240,6 +248,7 @@
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.10.0/proj4.js" integrity="sha512-e3rsOu6v8lmVnZylXpOq3DO/UxrCgoEMqosQxGygrgHlves9HTwQzVQ/dLO+nwSbOSAecjRD7Y/c4onmiBVo6w==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <script src="./app.js"></script>
 </body>

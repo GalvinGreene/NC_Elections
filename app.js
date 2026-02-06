@@ -10,7 +10,7 @@ const MANIFEST_URL  = "./data/precompiled/manifest.json";
 const CONTEST_DIR   = "./data/precompiled/contests/";
 
 // Map
-let map, precinctLayer, precinctFeatures;
+let map, precinctLayer, countyLayer, precinctFeatures, countyFeatures;
 let baseLayer;
 
 // In-memory aggregates (TSV mode)
@@ -30,6 +30,7 @@ const elScope  = document.getElementById("scope");
 const elCounty = document.getElementById("county");
 const elContest= document.getElementById("contest");
 const elMapTarget = document.getElementById("mapTarget");
+const elMapAggregation = document.getElementById("mapAggregation");
 const elFolderSelect = document.getElementById("folderSelect");
 const elShade  = document.getElementById("shade");
 const elJoin   = document.getElementById("joinField");
@@ -141,6 +142,10 @@ function joinValueFromFeature(props){
 function resolvePrecinctAgg(active, key){
   if(active?.precinctLookup?.has(key)) return active.precinctLookup.get(key);
   return active?.precinctAgg?.get(key);
+}
+
+function countyAggKey(active, contestKey, county){
+  return active?.usesCombinedKeys ? county : `${contestKey}|${county}`;
 }
 
 function candidateEntriesFromAgg(agg){
@@ -1185,6 +1190,107 @@ function styleForFeatureFactory(active){
   }
 }
 
+function styleForCountyFeatureFactory(active){
+  return function(feature){
+    const props = feature.properties || {};
+    const county = norm(props.county_nam || props.COUNTY || props.county);
+    const countyFilter = elCounty.value;
+    const showLines = elLines.checked;
+    const lineWeight = Math.max(0, Number(elLineWeight.value) || 0);
+    const opacityScale = clamp01(Number(elLayerOpacity.value) || 0);
+    const contestKey = elContest.value;
+
+    if(countyFilter && county !== countyFilter){
+      return {
+        fillColor:"#111827",
+        color: showLines ? "#334155" : "transparent",
+        weight: showLines ? lineWeight * 0.4 : 0,
+        fillOpacity:0.03 * opacityScale,
+        opacity:0.08 * opacityScale
+      };
+    }
+
+    if(!active){
+      return {
+        fillColor:"#111827",
+        color: showLines ? "#334155" : "transparent",
+        weight: showLines ? lineWeight * 0.7 : 0,
+        fillOpacity:0.18 * opacityScale,
+        opacity:0.35 * opacityScale
+      };
+    }
+
+    const ckey = countyAggKey(active, contestKey, county);
+    const cagg = active.countyAgg.get(ckey);
+    if(!cagg || !cagg.winnerParty){
+      return {
+        fillColor:"#111827",
+        color: showLines ? "#334155" : "transparent",
+        weight: showLines ? lineWeight * 0.6 : 0,
+        fillOpacity:0.12 * opacityScale,
+        opacity:0.25 * opacityScale
+      };
+    }
+
+    const base = partyColor(cagg.winnerParty);
+    return {
+      fillColor: tint(base, 0.55),
+      color: showLines ? "#0b1220" : "transparent",
+      weight: showLines ? lineWeight : 0,
+      fillOpacity:0.78 * opacityScale,
+      opacity:0.6 * opacityScale
+    };
+  }
+}
+
+function buildCountyFeaturesFromPrecincts(){
+  if(!precinctFeatures?.features?.length) return null;
+  if(typeof turf !== "object" || typeof turf.union !== "function"){
+    return null;
+  }
+  const byCounty = new Map();
+  for(const feature of precinctFeatures.features){
+    const props = feature.properties || {};
+    const county = norm(props.county_nam);
+    if(!county) continue;
+    if(!byCounty.has(county)){
+      byCounty.set(county, []);
+    }
+    byCounty.get(county).push(feature);
+  }
+  const out = [];
+  for(const [county, features] of byCounty){
+    if(!features.length) continue;
+    let merged = features[0];
+    for(let i=1;i<features.length;i++){
+      try{
+        const candidate = turf.union(merged, features[i]);
+        if(candidate) merged = candidate;
+      } catch {
+        // keep existing merged geometry if union fails
+      }
+    }
+    merged = structuredClone(merged);
+    merged.properties = { ...merged.properties, county_nam: county };
+    out.push(merged);
+  }
+  return { type: "FeatureCollection", features: out };
+}
+
+function ensureCountyLayer(){
+  if(countyLayer) return;
+  countyFeatures = buildCountyFeaturesFromPrecincts();
+  if(!countyFeatures){
+    countyLayer = L.geoJSON(precinctFeatures, {
+      style: styleForCountyFeatureFactory(null)
+    });
+    return;
+  }
+  countyLayer = L.geoJSON(countyFeatures, {
+    style: styleForCountyFeatureFactory(null)
+  });
+}
+
 function bindFeatureEvents(feature, layer){
   layer.on("mousemove", () => {
     const p = feature.properties || {};
@@ -1316,7 +1422,27 @@ async function refresh(){
     renderCodeModal();
     return;
   }
-  precinctLayer.setStyle(styleForFeatureFactory(active));
+  const showCounty = elMapAggregation?.value === "county";
+  if(showCounty){
+    ensureCountyLayer();
+    if(countyLayer && !map.hasLayer(countyLayer)){
+      countyLayer.addTo(map);
+    }
+    if(precinctLayer && map.hasLayer(precinctLayer)){
+      map.removeLayer(precinctLayer);
+    }
+    if(countyLayer){
+      countyLayer.setStyle(styleForCountyFeatureFactory(active));
+    }
+  } else {
+    if(countyLayer && map.hasLayer(countyLayer)){
+      map.removeLayer(countyLayer);
+    }
+    if(precinctLayer && !map.hasLayer(precinctLayer)){
+      precinctLayer.addTo(map);
+    }
+    precinctLayer.setStyle(styleForFeatureFactory(active));
+  }
   await updatePanels(active);
   updateVoteTotals(active);
   renderMismatchPanel();
@@ -1361,6 +1487,7 @@ async function init(){
       style: styleForFeatureFactory(null),
       onEachFeature: bindFeatureEvents
     }).addTo(map);
+    ensureCountyLayer();
   } catch (e){
     console.error(e);
     elSummary.textContent = "Precinct polygons failed to load. If you opened index.html directly, start a local server (e.g. python -m http.server) to avoid file:// CORS issues.";
@@ -1564,6 +1691,9 @@ elCounty.addEventListener("change", async () => { fillContestDropdown(); await r
 elContest.addEventListener("change", refresh);
 elShade.addEventListener("change", refresh);
 elJoin.addEventListener("change", refresh);
+if(elMapAggregation){
+  elMapAggregation.addEventListener("change", refresh);
+}
 elLines.addEventListener("change", refresh);
 elLineWeight.addEventListener("input", () => { updateLineWeightLabel(); refresh(); });
 elLayerOpacity.addEventListener("input", () => { updateLayerOpacityLabel(); refresh(); });
