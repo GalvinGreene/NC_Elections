@@ -254,25 +254,24 @@ function computeTSVNameMismatches(rows){
 function renderMismatchPanel(){
   if(!elMismatchSummary || !elMismatchList || !elApplyMismatchBtn) return;
   if(!rawTSVText){
-    elMismatchSummary.textContent = "Load a TSV to review unmatched precinct names.";
+    elMismatchSummary.textContent = "Load a TSV to review unmatched precinct IDs.";
     elMismatchList.innerHTML = "";
     elApplyMismatchBtn.disabled = true;
     return;
   }
   if(!tsvNameMismatches.length){
-    elMismatchSummary.textContent = "No unmatched precinct names found.";
+    elMismatchSummary.textContent = "No unmatched precinct IDs found.";
     elMismatchList.innerHTML = "";
     elApplyMismatchBtn.disabled = true;
     return;
   }
-  elMismatchSummary.textContent = `${tsvNameMismatches.length} precinct name mismatches (TSV vs GeoJSON).`;
+  elMismatchSummary.textContent = `${tsvNameMismatches.length} precinct IDs with name mismatches (TSV vs GeoJSON).`;
   elApplyMismatchBtn.disabled = false;
   elMismatchList.innerHTML = tsvNameMismatches.map((m, idx) => `
     <div class="mismatchRow">
       <div class="mismatchMeta">
-        <div><b>${m.county}</b> · prec_id ${m.precId}</div>
-        <div class="small">GeoJSON: ${m.geoName || "—"}</div>
-        <div class="small">TSV: ${m.tsvName || "—"}</div>
+        <div><b>${m.county}</b> · Precinct ID ${m.precId}</div>
+        <div class="small">Enter the correct precinct name to apply.</div>
       </div>
       <input type="text" data-mismatch-index="${idx}" value="${m.tsvName}" />
     </div>
