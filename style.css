@@ -164,3 +164,49 @@ main{
   height:24px;
   cursor:pointer;
 }
+
+.mismatchRow{
+  display:flex;
+  gap:8px;
+  align-items:flex-start;
+  padding:8px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:rgba(11,15,20,.4);
+}
+.mismatchRow input[type="text"]{
+  min-width:160px;
+}
+.mismatchMeta{
+  flex:1;
+  font-size:12px;
+  color:var(--text);
+}
+
+.modal{
+  position:fixed;
+  inset:0;
+  background:rgba(3,7,18,.65);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:16px;
+  z-index:20;
+}
+.modal.hidden{display:none}
+.modalCard{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:16px;
+  width:min(720px, 92vw);
+  max-height:86vh;
+  overflow:auto;
+}
+.modalHeader{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:10px;
+}
