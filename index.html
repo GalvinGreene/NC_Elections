@@ -141,17 +141,17 @@
       </div>
 
       <div class="panelSection">
-        <div class="panelTitle">Unmatched precinct IDs</div>
+        <div class="panelTitle">Unmatched precincts</div>
+        <label>
+          View
+          <select id="mismatchView">
+            <option value="ids" selected>Unmatched precinct IDs</option>
+            <option value="codes">Unmatched precinct codes</option>
+          </select>
+        </label>
         <div id="mismatchSummary" class="small">Load a TSV to review unmatched precinct IDs.</div>
         <div id="mismatchList" class="stack"></div>
-        <button id="applyMismatchBtn" type="button" disabled>Apply name updates</button>
-      </div>
-
-      <div class="panelSection">
-        <div class="panelTitle">Unmatched precinct codes</div>
-        <div id="codeMismatchSummary" class="small">Load a TSV to review unmatched precinct codes.</div>
-        <div id="codeMismatchList" class="stack"></div>
-        <button id="applyCodeMismatchBtn" type="button" disabled>Apply precinct code updates</button>
+        <button id="openCodeModalBtn" type="button" disabled>Update precinct codes by county</button>
       </div>
 
       <div class="panelSection">
@@ -218,6 +218,26 @@
       </div>
     </aside>
   </main>
+
+  <div id="codeModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="codeModalTitle">
+    <div class="modalCard">
+      <div class="modalHeader">
+        <div id="codeModalTitle" class="panelTitle">Update unmatched precinct codes</div>
+        <button id="closeCodeModalBtn" type="button">Close</button>
+      </div>
+      <label>
+        County
+        <select id="codeModalCounty">
+          <option value="">All counties</option>
+        </select>
+      </label>
+      <div id="codeModalSummary" class="small">Load a TSV to review unmatched precinct codes.</div>
+      <div id="codeModalList" class="stack"></div>
+      <div class="row">
+        <button id="applyCodeModalBtn" type="button" disabled>Apply precinct code updates</button>
+      </div>
+    </div>
+  </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.10.0/proj4.js" integrity="sha512-e3rsOu6v8lmVnZylXpOq3DO/UxrCgoEMqosQxGygrgHlves9HTwQzVQ/dLO+nwSbOSAecjRD7Y/c4onmiBVo6w==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
