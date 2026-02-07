@@ -1339,11 +1339,22 @@ function buildDistrictFeaturesFromPrecincts(active){
     }
   }
   if(!included.length) return null;
+  const cleaned = included.map(feature => {
+    let next = feature;
+    if(typeof turf.cleanCoords === "function"){
+      try{
+        next = turf.cleanCoords(next);
+      } catch {
+        next = feature;
+      }
+    }
+    return next;
+  });
   let dissolved = null;
   if(typeof turf.dissolve === "function"){
     const collection = {
       type: "FeatureCollection",
-      features: included.map(feature => ({
+      features: cleaned.map(feature => ({
         ...feature,
         properties: { ...(feature.properties || {}), __district: "merged" }
       }))
@@ -1354,14 +1365,26 @@ function buildDistrictFeaturesFromPrecincts(active){
       dissolved = null;
     }
   }
-  let merged = dissolved?.features?.[0] || included[0];
-  const dissolveFeatures = dissolved?.features?.length ? dissolved.features : included;
-  for(let i=1;i<dissolveFeatures.length;i++){
+  const mergeList = dissolved?.features?.length ? dissolved.features : cleaned;
+  let merged = mergeList[0];
+  for(let i=1;i<mergeList.length;i++){
+    const candidate = mergeList[i];
     try{
-      const candidate = turf.union(merged, dissolveFeatures[i]);
-      if(candidate) merged = candidate;
+      const unioned = turf.union(merged, candidate);
+      if(unioned) merged = unioned;
+      continue;
     } catch {
-      // keep existing merged geometry if union fails
+      // retry with buffered geometries if union fails
+    }
+    if(typeof turf.buffer === "function"){
+      try{
+        const bufferedA = turf.buffer(merged, 0);
+        const bufferedB = turf.buffer(candidate, 0);
+        const unioned = turf.union(bufferedA, bufferedB);
+        if(unioned) merged = unioned;
+      } catch {
+        // keep existing merged geometry if union fails
+      }
     }
   }
   merged = structuredClone(merged);
@@ -1429,12 +1452,6 @@ function styleForDistrictFeatureFactory(active){
 }
 
 function ensureDistrictLayer(active){
-  const contestKey = elContest.value;
-  const folderKey = elMapTarget.value === "folder"
-    ? `folder:${elFolderSelect.value}:${(active?.contestKeys || []).join(",")}`
-    : `contest:${contestKey}`;
-  if(districtLayer && lastDistrictKey === folderKey) return;
-  lastDistrictKey = folderKey;
   const districtFeatures = buildDistrictFeaturesFromPrecincts(active);
   if(!districtFeatures){
     districtLayer = null;
