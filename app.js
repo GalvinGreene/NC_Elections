@@ -10,8 +10,9 @@ const MANIFEST_URL  = "./data/precompiled/manifest.json";
 const CONTEST_DIR   = "./data/precompiled/contests/";
 
 // Map
-let map, precinctLayer, countyLayer, precinctFeatures, countyFeatures;
+let map, precinctLayer, countyLayer, districtLayer, precinctFeatures, countyFeatures;
 let baseLayer;
+let lastDistrictKey = null;
 
 // In-memory aggregates (TSV mode)
 let contestsTSV = [];
@@ -1243,6 +1244,177 @@ function styleForCountyFeatureFactory(active){
   }
 }
 
+function buildDistrictAggregate(active, contestKey){
+  if(!active?.precinctAgg) return null;
+  const agg = { total: 0, candVotes: new Map(), partyVotes: new Map() };
+  for(const [pkey, val] of active.precinctAgg){
+    if(active.usesCombinedKeys){
+      if(!active.precinctAgg.has(pkey)) continue;
+    } else if(!pkey.startsWith(contestKey + "|")){
+      continue;
+    }
+    const votes = val.total || 0;
+    agg.total += votes;
+    if(val.candVotes){
+      for(const [cand, data] of val.candVotes instanceof Map ? val.candVotes : Object.entries(val.candVotes)){
+        const prev = agg.candVotes.get(cand) || { votes: 0, party: data.party };
+        prev.votes += data.votes || 0;
+        if(!prev.party && data.party) prev.party = data.party;
+        agg.candVotes.set(cand, prev);
+      }
+    }
+    if(val.partyVotes){
+      const entries = val.partyVotes instanceof Map ? val.partyVotes : new Map(Object.entries(val.partyVotes));
+      for(const [party, partyVotes] of entries){
+        agg.partyVotes.set(party, (agg.partyVotes.get(party) || 0) + (partyVotes || 0));
+      }
+    }
+  }
+
+  let best = null;
+  let second = 0;
+  if(agg.candVotes.size){
+    for(const [cand, v] of agg.candVotes){
+      if(!best || v.votes > best.votes){
+        if(best) second = Math.max(second, best.votes);
+        best = { name: cand, party: v.party, votes: v.votes };
+      } else {
+        second = Math.max(second, v.votes);
+      }
+    }
+  } else if(agg.partyVotes.size){
+    for(const [party, votes] of agg.partyVotes){
+      if(!best || votes > best.votes){
+        if(best) second = Math.max(second, best.votes);
+        best = { name: party, party, votes };
+      } else {
+        second = Math.max(second, votes);
+      }
+    }
+  }
+  agg.winner = best;
+  agg.runnerUpVotes = second;
+  agg.marginPct = agg.total ? ((best?.votes || 0) - second) / agg.total : 0;
+  return agg;
+}
+
+function buildDistrictFeaturesFromPrecincts(active){
+  if(!precinctFeatures?.features?.length) return null;
+  if(typeof turf !== "object" || typeof turf.union !== "function"){
+    return null;
+  }
+  const contestKey = elContest.value;
+  const precinctKeys = new Set();
+  for(const pkey of active?.precinctAgg?.keys() || []){
+    if(active.usesCombinedKeys){
+      precinctKeys.add(pkey);
+    } else if(pkey.startsWith(contestKey + "|")){
+      const [, county, ...rest] = pkey.split("|");
+      const precinct = rest.join("|");
+      precinctKeys.add(`${county}|${precinct}`);
+    }
+  }
+  const included = [];
+  for(const feature of precinctFeatures.features){
+    const props = feature.properties || {};
+    const county = norm(props.county_nam);
+    const precinct = norm(joinValueFromFeature(props));
+    if(precinctKeys.has(`${county}|${precinct}`)){
+      included.push(feature);
+    }
+  }
+  if(!included.length) return null;
+  let merged = included[0];
+  for(let i=1;i<included.length;i++){
+    try{
+      const candidate = turf.union(merged, included[i]);
+      if(candidate) merged = candidate;
+    } catch {
+      // keep existing merged geometry if union fails
+    }
+  }
+  merged = structuredClone(merged);
+  merged.properties = {
+    ...merged.properties,
+    contest: (active?.contest?.title ?? "").toString()
+  };
+  return { type: "FeatureCollection", features: [merged] };
+}
+
+function styleForDistrictFeatureFactory(active){
+  return function(){
+    if(!active){
+      return {
+        fillColor:"#111827",
+        color:"#334155",
+        weight:1,
+        fillOpacity:0.12,
+        opacity:0.35
+      };
+    }
+    const contestKey = elContest.value;
+    const agg = buildDistrictAggregate(active, contestKey);
+    if(!agg || !agg.winner){
+      return {
+        fillColor:"#111827",
+        color:"#334155",
+        weight:1,
+        fillOpacity:0.12,
+        opacity:0.35
+      };
+    }
+    const shade = elShade.value;
+    const opacityScale = clamp01(Number(elLayerOpacity.value) || 0);
+    if(shade === "party"){
+      return {
+        fillColor: winnerColor(agg.winner),
+        color:"#0b1220",
+        weight:1,
+        fillOpacity:0.5 * opacityScale,
+        opacity:0.7 * opacityScale
+      };
+    }
+    if(shade === "margin"){
+      const base = winnerColor(agg.winner);
+      const t = 0.75 - 0.65*clamp01(agg.marginPct || 0);
+      return {
+        fillColor:tint(base, t),
+        color:"#0b1220",
+        weight:1,
+        fillOpacity:0.55 * opacityScale,
+        opacity:0.7 * opacityScale
+      };
+    }
+    const turnout = clamp01((agg.total || 0) / 50000);
+    const ccol = tint("#22c55e", 0.85 - 0.7*turnout);
+    return {
+      fillColor:ccol,
+      color:"#0b1220",
+      weight:1,
+      fillOpacity:0.55 * opacityScale,
+      opacity:0.7 * opacityScale
+    };
+  };
+}
+
+function ensureDistrictLayer(active){
+  const contestKey = elContest.value;
+  const folderKey = elMapTarget.value === "folder"
+    ? `folder:${elFolderSelect.value}:${(active?.contestKeys || []).join(",")}`
+    : `contest:${contestKey}`;
+  if(districtLayer && lastDistrictKey === folderKey) return;
+  lastDistrictKey = folderKey;
+  const districtFeatures = buildDistrictFeaturesFromPrecincts(active);
+  if(!districtFeatures){
+    districtLayer = null;
+    return;
+  }
+  districtLayer = L.geoJSON(districtFeatures, {
+    style: styleForDistrictFeatureFactory(active),
+    onEachFeature: (feature, layer) => bindDistrictEvents(feature, layer, active)
+  });
+}
+
 function buildCountyFeaturesFromPrecincts(){
   if(!precinctFeatures?.features?.length) return null;
   if(typeof turf !== "object" || typeof turf.union !== "function"){
@@ -1348,6 +1520,39 @@ function bindFeatureEvents(feature, layer){
   });
 }
 
+function bindDistrictEvents(feature, layer, active){
+  layer.on("mousemove", () => {
+    const contestTitle = active?.contest?.title ?? "District";
+    hoverContext = null;
+    elHover.textContent = `District: ${contestTitle}`;
+    updateVoteTotals(active);
+  });
+  layer.on("mouseout", () => {
+    hoverContext = null;
+    elHover.textContent = "—";
+    updateVoteTotals(active);
+  });
+  layer.on("click", () => {
+    const contestTitle = active?.contest?.title ?? "District";
+    const contestKey = elContest.value;
+    const agg = buildDistrictAggregate(active, contestKey);
+    if(!agg || !agg.winner){
+      elClick.textContent = `No results matched.\nDistrict: ${contestTitle}`;
+      return;
+    }
+    const margin = ((agg.marginPct || 0)*100).toFixed(1) + "%";
+    const optionKey = optionKeyFromCandidate(agg.winner.name);
+    const partyLabel = optionKey ? `Option: ${optionKey}` : `Party: ${agg.winner.party || "—"}`;
+    elClick.textContent =
+      `District: ${contestTitle}\n\n` +
+      `Winner: ${agg.winner.name || "—"}\n` +
+      `${partyLabel}\n` +
+      `Votes: ${Math.round(agg.winner.votes || 0).toLocaleString()}\n` +
+      `Total: ${Math.round(agg.total || 0).toLocaleString()}\n` +
+      `Margin: ${margin}`;
+  });
+}
+
 async function updatePanels(active){
   const contestKey = elContest.value;
   const countyFilter = elCounty.value;
@@ -1423,7 +1628,22 @@ async function refresh(){
     return;
   }
   const showCounty = elMapAggregation?.value === "county";
-  if(showCounty){
+  const showDistrict = elMapAggregation?.value === "district";
+  if(showDistrict){
+    ensureDistrictLayer(active);
+    if(districtLayer && !map.hasLayer(districtLayer)){
+      districtLayer.addTo(map);
+    }
+    if(precinctLayer && map.hasLayer(precinctLayer)){
+      map.removeLayer(precinctLayer);
+    }
+    if(countyLayer && map.hasLayer(countyLayer)){
+      map.removeLayer(countyLayer);
+    }
+    if(districtLayer){
+      districtLayer.setStyle(styleForDistrictFeatureFactory(active));
+    }
+  } else if(showCounty){
     ensureCountyLayer();
     if(countyLayer && !map.hasLayer(countyLayer)){
       countyLayer.addTo(map);
@@ -1431,12 +1651,18 @@ async function refresh(){
     if(precinctLayer && map.hasLayer(precinctLayer)){
       map.removeLayer(precinctLayer);
     }
+    if(districtLayer && map.hasLayer(districtLayer)){
+      map.removeLayer(districtLayer);
+    }
     if(countyLayer){
       countyLayer.setStyle(styleForCountyFeatureFactory(active));
     }
   } else {
     if(countyLayer && map.hasLayer(countyLayer)){
       map.removeLayer(countyLayer);
+    }
+    if(districtLayer && map.hasLayer(districtLayer)){
+      map.removeLayer(districtLayer);
     }
     if(precinctLayer && !map.hasLayer(precinctLayer)){
       precinctLayer.addTo(map);
