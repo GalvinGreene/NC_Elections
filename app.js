@@ -1246,13 +1246,10 @@ function styleForCountyFeatureFactory(active){
 
 function buildDistrictAggregate(active, contestKey){
   if(!active?.precinctAgg) return null;
-  const agg = { total: 0, candVotes: new Map() };
+  const agg = { total: 0, candVotes: new Map(), partyVotes: new Map() };
   for(const [pkey, val] of active.precinctAgg){
     if(active.usesCombinedKeys){
-      const [county, precinct] = pkey.split("|");
-      const combinedKey = `${county}|${precinct}`;
-      const entry = resolvePrecinctAgg(active, combinedKey);
-      if(!entry) continue;
+      if(!active.precinctAgg.has(pkey)) continue;
     } else if(!pkey.startsWith(contestKey + "|")){
       continue;
     }
@@ -1266,16 +1263,33 @@ function buildDistrictAggregate(active, contestKey){
         agg.candVotes.set(cand, prev);
       }
     }
+    if(val.partyVotes){
+      const entries = val.partyVotes instanceof Map ? val.partyVotes : new Map(Object.entries(val.partyVotes));
+      for(const [party, partyVotes] of entries){
+        agg.partyVotes.set(party, (agg.partyVotes.get(party) || 0) + (partyVotes || 0));
+      }
+    }
   }
 
   let best = null;
   let second = 0;
-  for(const [cand, v] of agg.candVotes){
-    if(!best || v.votes > best.votes){
-      if(best) second = Math.max(second, best.votes);
-      best = { name: cand, party: v.party, votes: v.votes };
-    } else {
-      second = Math.max(second, v.votes);
+  if(agg.candVotes.size){
+    for(const [cand, v] of agg.candVotes){
+      if(!best || v.votes > best.votes){
+        if(best) second = Math.max(second, best.votes);
+        best = { name: cand, party: v.party, votes: v.votes };
+      } else {
+        second = Math.max(second, v.votes);
+      }
+    }
+  } else if(agg.partyVotes.size){
+    for(const [party, votes] of agg.partyVotes){
+      if(!best || votes > best.votes){
+        if(best) second = Math.max(second, best.votes);
+        best = { name: party, party, votes };
+      } else {
+        second = Math.max(second, votes);
+      }
     }
   }
   agg.winner = best;
@@ -1290,14 +1304,24 @@ function buildDistrictFeaturesFromPrecincts(active){
     return null;
   }
   const contestKey = elContest.value;
+  const precinctKeys = new Set();
+  for(const pkey of active?.precinctAgg?.keys() || []){
+    if(active.usesCombinedKeys){
+      precinctKeys.add(pkey);
+    } else if(pkey.startsWith(contestKey + "|")){
+      const [, county, ...rest] = pkey.split("|");
+      const precinct = rest.join("|");
+      precinctKeys.add(`${county}|${precinct}`);
+    }
+  }
   const included = [];
   for(const feature of precinctFeatures.features){
     const props = feature.properties || {};
     const county = norm(props.county_nam);
     const precinct = norm(joinValueFromFeature(props));
-    const key = active?.usesCombinedKeys ? `${county}|${precinct}` : `${contestKey}|${county}|${precinct}`;
-    const match = active ? resolvePrecinctAgg(active, key) : null;
-    if(match) included.push(feature);
+    if(precinctKeys.has(`${county}|${precinct}`)){
+      included.push(feature);
+    }
   }
   if(!included.length) return null;
   let merged = included[0];
@@ -1375,8 +1399,11 @@ function styleForDistrictFeatureFactory(active){
 
 function ensureDistrictLayer(active){
   const contestKey = elContest.value;
-  if(districtLayer && lastDistrictKey === contestKey) return;
-  lastDistrictKey = contestKey;
+  const folderKey = elMapTarget.value === "folder"
+    ? `folder:${elFolderSelect.value}:${(active?.contestKeys || []).join(",")}`
+    : `contest:${contestKey}`;
+  if(districtLayer && lastDistrictKey === folderKey) return;
+  lastDistrictKey = folderKey;
   const districtFeatures = buildDistrictFeaturesFromPrecincts(active);
   if(!districtFeatures){
     districtLayer = null;
