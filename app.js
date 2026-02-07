@@ -12,6 +12,7 @@ const CONTEST_DIR   = "./data/precompiled/contests/";
 // Map
 let map, precinctLayer, countyLayer, districtLayer, precinctFeatures, countyFeatures;
 let baseLayer;
+let lastDistrictKey = null;
 
 // In-memory aggregates (TSV mode)
 let contestsTSV = [];
