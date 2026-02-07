@@ -1314,20 +1314,51 @@ function buildDistrictFeaturesFromPrecincts(active){
       precinctKeys.add(`${county}|${precinct}`);
     }
   }
+  if(active?.precinctLookup){
+    for(const aliasKey of active.precinctLookup.keys()){
+      if(active.usesCombinedKeys){
+        precinctKeys.add(aliasKey);
+      } else if(aliasKey.startsWith(contestKey + "|")){
+        const [, county, ...rest] = aliasKey.split("|");
+        const precinct = rest.join("|");
+        precinctKeys.add(`${county}|${precinct}`);
+      }
+    }
+  }
   const included = [];
   for(const feature of precinctFeatures.features){
     const props = feature.properties || {};
     const county = norm(props.county_nam);
-    const precinct = norm(joinValueFromFeature(props));
-    if(precinctKeys.has(`${county}|${precinct}`)){
+    const precinctCode = norm(props.prec_id);
+    const precinctName = norm(props.enr_desc);
+    if(
+      precinctKeys.has(`${county}|${precinctCode}`) ||
+      precinctKeys.has(`${county}|${precinctName}`)
+    ){
       included.push(feature);
     }
   }
   if(!included.length) return null;
-  let merged = included[0];
-  for(let i=1;i<included.length;i++){
+  let dissolved = null;
+  if(typeof turf.dissolve === "function"){
+    const collection = {
+      type: "FeatureCollection",
+      features: included.map(feature => ({
+        ...feature,
+        properties: { ...(feature.properties || {}), __district: "merged" }
+      }))
+    };
     try{
-      const candidate = turf.union(merged, included[i]);
+      dissolved = turf.dissolve(collection, { propertyName: "__district" });
+    } catch {
+      dissolved = null;
+    }
+  }
+  let merged = dissolved?.features?.[0] || included[0];
+  const dissolveFeatures = dissolved?.features?.length ? dissolved.features : included;
+  for(let i=1;i<dissolveFeatures.length;i++){
+    try{
+      const candidate = turf.union(merged, dissolveFeatures[i]);
       if(candidate) merged = candidate;
     } catch {
       // keep existing merged geometry if union fails
